@@ -116,7 +116,7 @@ def analyze_video():
         "save=False",
         "save_txt=False"
     ]
-
+    print("Start analysis")
     subprocess.run(predict_command)
 
 

@@ -732,6 +732,7 @@ def analyze_plot_firebase():
     
 #main method for starting the whole algorithm
 if __name__ == "__main__":
+    print("Enters predict.py")
     predict()
     for file_name in global_instance.video_files:
         global_instance.current_video_file = file_name
