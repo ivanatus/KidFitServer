@@ -174,4 +174,4 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=3321, ssl_certfile="cert.pem", ssl_keyfile="key.pem") # start server
+    uvicorn.run(app, host="0.0.0.0", port=80, ssl_certfile="cert.pem", ssl_keyfile="key.pem") # start server
