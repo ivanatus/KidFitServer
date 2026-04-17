@@ -33,7 +33,7 @@ sys.path.append(os.path.join(BASE_DIR, "deep_sort_pytorch", "deep_sort", "sort")
 from globals import Globals
 
 #Firebase setup - NOT NEEDED
-import firebase_admin
+'''import firebase_admin
 from firebase_admin import credentials
 json_path = os.path.join(BASE_DIR, "newServiceAccountKey.json")
 cred = credentials.Certificate(json_path)
@@ -43,7 +43,7 @@ firebase_admin.initialize_app(cred, {
     'storageBucket': 'exercise-project-bc0dc.appspot.com'
 })
 from firebase_admin import storage
-from firebase_admin import db
+from firebase_admin import db'''
 
 #dependencies for import of output values and their visualization
 import pandas as pd
@@ -538,7 +538,7 @@ def predict(cfg):
 Function that is called at the very end of execution.
 Sends generated results in form of csv file to Firebase storage
 """
-def send_results_to_firebase():
+'''def send_results_to_firebase():
     bucket = storage.bucket() #reference to Firebase Storage
     current_results = global_instance.current_video_file + ".csv" #path to file that is going to be sent to Storage
     all_results = "movement.csv"
@@ -728,7 +728,7 @@ def analyze_plot_firebase():
 
     # Show the plot
     plt.tight_layout()
-    plt.savefig("graph.png", format="png")
+    plt.savefig("graph.png", format="png")'''
     
 #main method for starting the whole algorithm
 if __name__ == "__main__":
