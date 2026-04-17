@@ -103,9 +103,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     
 def analyze_video():
     """Run predict.py on all of the videos from video folder"""
-    if is_cv_running: # if video processing is already in progress, don't start again
-        print("CV process was already running.")
-        return
+    #if is_cv_running: # if video processing is already in progress, don't start again
+    #    print("CV process was already running.")
+    #    return
     
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
     #return  # currently exit, until server 
