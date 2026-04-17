@@ -106,7 +106,7 @@ def analyze_video():
     if is_cv_running: # if video processing is already in progress, don't start again
         return
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
-    return  # currently exit, until server 
+    #return  # currently exit, until server 
     predict_command = [
         "python",
         predict_script_path,
