@@ -172,6 +172,11 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
     analyze_video()
     return JSONResponse({"filename": file.filename, "message": "File uploaded successfully!"})
 
+# Server health check
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=80, ssl_certfile="cert.pem", ssl_keyfile="key.pem") # start server
