@@ -151,6 +151,7 @@ def video_worker():
         encrypted_file = job["encrypted_file"]
         decrypted_file = job["decrypted_file"]
         set_job_state(job_id, status="running", started_at=now_iso())
+        print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
 
         try:
             LEAdecryptCTR.decrypt_video(encrypted_file, decrypted_file)
@@ -163,6 +164,7 @@ def video_worker():
                 raise RuntimeError(error_msg)
 
             set_job_state(job_id, status="done", finished_at=now_iso())
+            print(f"[video-worker] Video processing finished: {job_id} ({os.path.basename(decrypted_file)})")
         except Exception as exc:
             set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
         finally:
