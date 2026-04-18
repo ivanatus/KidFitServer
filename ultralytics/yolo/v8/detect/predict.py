@@ -625,27 +625,29 @@ def analyze_plot():
 
     print(f"Movement in this video: {movement}")
     user = global_instance.current_video_file.split("_")
-    date = user[1].split(".")
-    date = date[0]
+    time = user[2].split(".")
+    time = time[0]
+    date = user[1]
     user = user[0]
 
     print(f"User: {user}")
     print(f"Date: {date}")
+    print(f"Time: {time}")
     
     # If previous data for this user exists - decrypt it
-    if os.path.exists(os.path.join(BASE_DIR, user)):
-        LEAdecryptCBC.decrypt_file(user + ".enc", user + ".csv")
+    if os.path.exists(os.path.join(BASE_DIR, "results", user, ".enc")):
+        LEAdecryptCBC.decrypt_file(os.path.join(BASE_DIR, "results", user, ".enc"), user + ".csv")
     else:
          with open(global_instance.current_video_file + '.csv', 'a', newline='') as csvfile:
             fieldnames = ['date', 'movement']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writerow({'date': 'Date', 'movement': 'Movement'})
+            writer.writerow({'date': 'Date', 'time': 'Time', 'movement': 'Movement'})
 
     with open(user + ".csv", 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writerow({'date': date, 'movement': movement})
+        writer.writerow({'date': date, 'time': time, 'movement': movement})
 
-    LEAencryptCBC.encrypt_file(user + ".csv", user + ".enc")
+    LEAencryptCBC.encrypt_file(user + ".csv", os.path.join(BASE_DIR, "results", user, ".enc"))
     os.remove(user + ".csv")
 
 
