@@ -1,6 +1,6 @@
 import os
 #import LEA  # Make sure the LEA library from the manual is installed/imported
-from LEA_Python import LEA
+from LEA_Python.LEA import CTR, DECRYPT_MODE
 import time
 
 def decrypt_video(input_file, output_file):
@@ -24,7 +24,7 @@ def decrypt_video(input_file, output_file):
     ])
     
     # Create CTR cipher object in decryption mode
-    leaCTR = LEA.CTR(LEA.DECRYPT_MODE, key, iv)
+    leaCTR = CTR(DECRYPT_MODE, key, iv)
     
     # Open encrypted input file and decrypted output file
     with open(input_file, "rb") as fin, open(output_file, "wb") as fout:

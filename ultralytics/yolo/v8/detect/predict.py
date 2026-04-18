@@ -31,7 +31,6 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, "deep_sort_pytorch", "deep_sort", "sort"))
 from globals import Globals
-from LEA_Python import LEA
 import LEAdecryptCBC
 import LEAencryptCBC
 

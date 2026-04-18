@@ -1,6 +1,6 @@
 import os
 #import LEA  # Make sure the LEA library from the manual is installed/imported
-from LEA_Python import LEA
+from LEA_Python.LEA import CBC, ENCRYPT_MODE
 import time
 
 BLOCK_SIZE = 16  # LEA block size (128 bits)
@@ -28,7 +28,7 @@ def encrypt_file(input_file, output_file):
     ])
     
     # Create CBC cipher object
-    leaCBC= LEA.CBC(LEA.ENCRYPT_MODE, key, iv)
+    leaCBC= CBC(ENCRYPT_MODE, key, iv)
     
     # Open input video and output encrypted file
     with open(input_file, "rb") as fin, open(output_file, "wb") as fout:

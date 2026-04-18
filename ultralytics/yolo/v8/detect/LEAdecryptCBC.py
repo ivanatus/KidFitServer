@@ -1,6 +1,6 @@
 import os
 #import LEA  # Make sure the LEA library from the manual is installed/imported
-from LEA_Python import LEA
+from LEA_Python.LEA import CBC, DECRYPT_MODE
 import time
 
 def unpad(data):
@@ -27,7 +27,7 @@ def decrypt_file(input_file, output_file):
     ])
     
     # Create CBC cipher object in decryption mode
-    leaCBC = LEA.CBC(LEA.DECRYPT_MODE, key, iv)
+    leaCBC = CBC(DECRYPT_MODE, key, iv)
     
     # Open encrypted input file and decrypted output file
     with open(input_file, "rb") as fin, open(output_file, "wb") as fout:
