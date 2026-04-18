@@ -1,5 +1,6 @@
 import os
-import lea  # Make sure the LEA library from the manual is installed/imported
+#import LEA  # Make sure the LEA library from the manual is installed/imported
+from LEA_Python import LEA
 import time
 
 BLOCK_SIZE = 16  # LEA block size (128 bits)

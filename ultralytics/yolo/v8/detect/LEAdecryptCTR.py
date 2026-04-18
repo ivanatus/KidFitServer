@@ -1,5 +1,6 @@
 import os
-import LEA  # Make sure the LEA library from the manual is installed/imported
+#import LEA  # Make sure the LEA library from the manual is installed/imported
+from LEA_Python import LEA
 import time
 
 def decrypt_video(input_file, output_file):
