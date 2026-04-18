@@ -7,6 +7,9 @@ import os
 from datetime import datetime, timedelta
 import uvicorn
 import sys
+import queue
+import threading
+from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
 import LEAdecryptCBC
@@ -23,8 +26,16 @@ from slowapi.errors import RateLimitExceeded
 app = FastAPI()
 UPLOAD_FOLDER = "video"
 RESULT_FOLDER = "results"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+UPLOAD_DIR = os.path.join(BASE_DIR, UPLOAD_FOLDER)
+RESULT_DIR = os.path.join(BASE_DIR, RESULT_FOLDER)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(RESULT_DIR, exist_ok=True)
 revoked_tokens = set()
+video_job_queue = queue.Queue()
+video_jobs = {}
+video_jobs_lock = threading.Lock()
+worker_thread = None
+STOP_SENTINEL = object()
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -100,15 +111,21 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         return user
     except JWTError:
         raise credentials_exception
-    
+
+
+def now_iso():
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def set_job_state(job_id, **updates):
+    with video_jobs_lock:
+        if job_id in video_jobs:
+            video_jobs[job_id].update(updates)
+
+
 def analyze_video():
     """Run predict.py on all of the videos from video folder"""
-    #if is_cv_running: # if video processing is already in progress, don't start again
-    #    print("CV process was already running.")
-    #    return
-    
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
-    #return  # currently exit, until server 
     predict_command = [
         "python",
         predict_script_path,
@@ -120,7 +137,51 @@ def analyze_video():
     ]
     print("Start analysis")
     print(predict_command)
-    subprocess.run(predict_command)
+    return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True)
+
+
+def video_worker():
+    while True:
+        job = video_job_queue.get()
+        if job is STOP_SENTINEL:
+            video_job_queue.task_done()
+            break
+
+        job_id = job["job_id"]
+        encrypted_file = job["encrypted_file"]
+        decrypted_file = job["decrypted_file"]
+        set_job_state(job_id, status="running", started_at=now_iso())
+
+        try:
+            LEAdecryptCTR.decrypt_video(encrypted_file, decrypted_file)
+            if os.path.exists(encrypted_file):
+                os.remove(encrypted_file)
+
+            result = analyze_video()
+            if result.returncode != 0:
+                error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
+                raise RuntimeError(error_msg)
+
+            set_job_state(job_id, status="done", finished_at=now_iso())
+        except Exception as exc:
+            set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
+        finally:
+            video_job_queue.task_done()
+
+
+@app.on_event("startup")
+def startup_worker():
+    global worker_thread
+    if worker_thread is None or not worker_thread.is_alive():
+        worker_thread = threading.Thread(target=video_worker, name="video-worker", daemon=True)
+        worker_thread.start()
+
+
+@app.on_event("shutdown")
+def shutdown_worker():
+    if worker_thread is not None and worker_thread.is_alive():
+        video_job_queue.put(STOP_SENTINEL)
+        worker_thread.join(timeout=5)
 
 
 def is_cv_running() -> bool:
@@ -155,7 +216,7 @@ async def revoke_token(token: str = Body(...)):
 # Server sends file to the Android device
 @app.get("/download/{filename}")
 async def download_file(filename: str, current_user: dict = Depends(get_current_user)):
-    file_path = os.path.join(RESULT_FOLDER, filename)
+    file_path = os.path.join(RESULT_DIR, filename)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path=file_path, filename=filename, media_type='application/octet-stream')
@@ -165,20 +226,54 @@ async def download_file(filename: str, current_user: dict = Depends(get_current_
 @limiter.limit("2/5minute") # limited to 2 uploads per 5 minutes
 async def upload_file(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     content = await file.read()
-    file_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(content)
     print(f"User {current_user['username']} uploaded file: {file.filename}, size: {len(content)} bytes")
-    output_file = file.filename.split(".")
-    LEAdecryptCTR.decrypt_video(os.path.join(BASE_DIR, UPLOAD_FOLDER, file.filename), os.path.join(BASE_DIR, UPLOAD_FOLDER, output_file[0] + ".mp4"))
-    os.remove(os.path.join(BASE_DIR, UPLOAD_FOLDER, file.filename))
-    analyze_video()
-    return JSONResponse({"filename": file.filename, "message": "File uploaded successfully!"})
+    output_name = os.path.splitext(file.filename)[0] + ".mp4"
+    decrypted_file = os.path.join(UPLOAD_DIR, output_name)
+
+    job_id = str(uuid4())
+    with video_jobs_lock:
+        video_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "filename": file.filename,
+            "decrypted_filename": output_name,
+            "created_at": now_iso(),
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+        }
+
+    video_job_queue.put({
+        "job_id": job_id,
+        "encrypted_file": file_path,
+        "decrypted_file": decrypted_file,
+    })
+    return JSONResponse(
+        {
+            "job_id": job_id,
+            "filename": file.filename,
+            "message": "File uploaded. Processing started in background.",
+        },
+        status_code=202,
+    )
+
+
+@app.get("/jobs/{job_id}")
+async def get_job_status(job_id: str, current_user: dict = Depends(get_current_user)):
+    with video_jobs_lock:
+        job = video_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
 
 # Server health check
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    worker_alive = worker_thread is not None and worker_thread.is_alive()
+    return {"status": "ok", "worker_alive": worker_alive, "queued_jobs": video_job_queue.qsize()}
 
 
 if __name__ == "__main__":

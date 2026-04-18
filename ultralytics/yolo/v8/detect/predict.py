@@ -638,8 +638,8 @@ def analyze_plot():
     if os.path.exists(os.path.join(BASE_DIR, "results", user, ".enc")):
         LEAdecryptCBC.decrypt_file(os.path.join(BASE_DIR, "results", user, ".enc"), user + ".csv")
     else:
-         with open(global_instance.current_video_file + '.csv', 'a', newline='') as csvfile:
-            fieldnames = ['date', 'movement']
+         with open(user + '.csv', 'a', newline='') as csvfile:
+            fieldnames = ['date', 'time', 'movement']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writerow({'date': 'Date', 'time': 'Time', 'movement': 'Movement'})
 
