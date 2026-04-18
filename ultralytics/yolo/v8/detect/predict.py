@@ -560,6 +560,8 @@ def predict(cfg):
                     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                     writer.writerow({'center x': 0, 'center y': 0, 'frame': 0, 'people in frame': 0})
 
+            analyze_plot()
+
 
 def analyze_plot():
     """Analysis of output results."""
