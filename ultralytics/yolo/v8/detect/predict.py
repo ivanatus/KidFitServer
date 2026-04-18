@@ -31,6 +31,8 @@ import sys
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, "deep_sort_pytorch", "deep_sort", "sort"))
 from globals import Globals
+import LEAdecryptCBC
+import LEAencryptCBC
 
 #Firebase setup - NOT NEEDED
 '''import firebase_admin
@@ -521,8 +523,9 @@ def predict(cfg):
             cap = cv2.VideoCapture(filename.path)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS)
-            duration_sec = total_frames / fps 
-            print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration_sec:.2f}s")
+            if fps > 0:
+                duration_sec = total_frames / fps 
+                print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration_sec:.2f}s")
             
             predictor = DetectionPredictor(cfg)
             predictor(filename.path)
@@ -533,6 +536,116 @@ def predict(cfg):
                 fieldnames = ['center x', 'center y', 'frame', 'people in frame']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writerow({'center x': 'center x', 'center y': 'center y', 'frame': 'frame', 'people in frame': 'people in frame'})
+            csv_path = global_instance.current_video_file + '.csv'
+            has_data_row = False
+            with open(csv_path, 'r', newline='') as csvfile:
+                reader = csv.DictReader(csvfile, fieldnames=fieldnames)
+                for row in reader:
+                    if row is None:
+                        continue
+                    is_empty_row = all((row.get(key) is None or str(row.get(key)).strip() == '') for key in fieldnames)
+                    is_header_row = (
+                        str(row.get('center x')).strip() == 'center x'
+                        and str(row.get('center y')).strip() == 'center y'
+                        and str(row.get('frame')).strip() == 'frame'
+                        and str(row.get('people in frame')).strip() == 'people in frame'
+                    )
+                    if is_empty_row or is_header_row:
+                        continue
+                    has_data_row = True
+                    break
+
+            if not has_data_row:
+                with open(csv_path, 'a', newline='') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writerow({'center x': 0, 'center y': 0, 'frame': 0, 'people in frame': 0})
+
+
+def analyze_plot():
+    """Analysis of output results."""
+    csv_file = global_instance.current_video_file + ".csv"
+
+    df = pd.read_csv(csv_file) #data frame from csv file using Pandas
+
+    #initialization of variables
+    movement_values = []
+    grouped = df.groupby('frame')
+    one_person = False
+    x_array = []
+    y_array = []
+
+    #Movement analysis per frame for entire video
+    for frame, frame_data in grouped:
+        if frame_data.empty: continue
+        
+        center_x_values = frame_data['center x'].values
+        center_y_values = frame_data['center y'].values
+        center_x_values = center_x_values[center_x_values != 'center x']
+        center_y_values = center_y_values[center_y_values != 'center y']
+        ppl = frame_data['people in frame'].values[0]
+        if(ppl == "people in frame"): break
+
+        #num_people = int(frame_data['people in frame'].iloc[0])
+        num_people = int(ppl)
+
+        if num_people == 1:
+            one_person = True
+            x_array.append(center_x_values[0])
+            y_array.append(center_y_values[0])
+            continue
+
+        # Izračunajte srednju vrijednost kretanja za ovaj frame
+        total_movement = 0
+        for i in range(num_people):
+            dx = float(center_x_values[i]) - float(center_x_values[i - 1])
+            dy = float(center_y_values[i]) - float(center_y_values[i - 1])
+            displacement = np.sqrt(dx**2 + dy**2)
+            total_movement += displacement
+
+        # Srednja vrijednost kretanja za ovaj frame
+        if num_people > 0:
+            average_movement = total_movement / num_people
+            movement_values.append(average_movement)
+        else:
+            movement_values.append(0.0)
+
+    if one_person:
+        for i in range(1, len(x_array)):
+            dx = float(x_array[i]) - float(x_array[i - 1])
+            dy = float(y_array[i]) - float(y_array[i - 1])
+            displacement = np.sqrt(dx**2 + dy**2)
+            movement_values.append(displacement)
+    if len(movement_values) > 0:
+        movement = np.array(movement_values).mean()
+        print("Nije detektirano kretanje u videu.")
+    else:
+        movement = 0
+
+    print(f"Movement in this video: {movement}")
+    user = global_instance.current_video_file.split("_")
+    date = user[1].split(".")
+    date = date[0]
+    user = user[0]
+
+    print(f"User: {user}")
+    print(f"Date: {date}")
+    
+    # If previous data for this user exists - decrypt it
+    if os.path.exists(os.path.join(BASE_DIR, user)):
+        LEAdecryptCBC.decrypt_file(user + ".enc", user + ".csv")
+    else:
+         with open(global_instance.current_video_file + '.csv', 'a', newline='') as csvfile:
+            fieldnames = ['date', 'movement']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writerow({'date': 'Date', 'movement': 'Movement'})
+
+    with open(user + ".csv", 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writerow({'date': date, 'movement': movement})
+
+    LEAencryptCBC(user + ".csv", user + ".enc")
+    os.remove(user + ".csv")
+
 
 """
 Function that is called at the very end of execution.
