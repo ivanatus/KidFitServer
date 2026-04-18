@@ -4,11 +4,12 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uvicorn
 import sys
 import queue
 import threading
+import shutil
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -114,7 +115,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 
 def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
+    return datetime.now(timezone.utc).isoformat()
 
 
 def set_job_state(job_id, **updates):
@@ -150,6 +151,7 @@ def video_worker():
         job_id = job["job_id"]
         encrypted_file = job["encrypted_file"]
         decrypted_file = job["decrypted_file"]
+        username = job["username"]
         set_job_state(job_id, status="running", started_at=now_iso())
         print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
 
@@ -163,8 +165,24 @@ def video_worker():
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
                 raise RuntimeError(error_msg)
 
+            # predict.py produces <video_prefix>.enc in BASE_DIR; normalize destination to results/<username>.enc
+            video_prefix = os.path.splitext(os.path.basename(decrypted_file))[0].split("_")[0]
+            src_enc_candidates = [
+                os.path.join(BASE_DIR, f"{video_prefix}.enc"),
+                os.path.join(BASE_DIR, f"{username}.enc"),
+            ]
+            src_enc = next((p for p in src_enc_candidates if os.path.exists(p)), None)
+            if src_enc is None:
+                raise FileNotFoundError(f"Encrypted result not found for job {job_id}")
+
+            dst_enc = os.path.join(RESULT_DIR, f"{username}.enc")
+            if os.path.exists(dst_enc):
+                os.remove(dst_enc)
+            shutil.move(src_enc, dst_enc)
+
             set_job_state(job_id, status="done", finished_at=now_iso())
             print(f"[video-worker] Video processing finished: {job_id} ({os.path.basename(decrypted_file)})")
+            print(f"[video-worker] Saved encrypted result: {dst_enc}")
         except Exception as exc:
             set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
         finally:
@@ -252,6 +270,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
         "job_id": job_id,
         "encrypted_file": file_path,
         "decrypted_file": decrypted_file,
+        "username": current_user["username"],
     })
     return JSONResponse(
         {

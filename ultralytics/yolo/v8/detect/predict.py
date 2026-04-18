@@ -527,10 +527,10 @@ def predict(cfg):
                 duration_sec = total_frames / fps 
                 print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration_sec:.2f}s")
             
-            predictor = DetectionPredictor(cfg)
-            predictor(filename.path)
             global_instance.current_video_file = filename.name
             print(f"global_instance.current_video_file: {global_instance.current_video_file}")
+            predictor = DetectionPredictor(cfg)
+            predictor(filename.path)
             global_instance.video_files.append(filename.name)
             with open(global_instance.current_video_file + '.csv', 'a', newline='') as csvfile:
                 fieldnames = ['center x', 'center y', 'frame', 'people in frame']
