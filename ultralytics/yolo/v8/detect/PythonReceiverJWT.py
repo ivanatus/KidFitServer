@@ -40,7 +40,7 @@ video_jobs_lock = threading.Lock()
 worker_thread = None
 STOP_SENTINEL = object()
 # CV runtime knobs (change these to trade speed vs accuracy)
-CV_MODEL = "yolov8s.pt"
+CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 640
 
 # Limiter
