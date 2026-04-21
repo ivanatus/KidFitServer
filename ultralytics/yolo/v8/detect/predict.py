@@ -683,6 +683,18 @@ def analyze_plot():
     # Cleanup intermediate per-video artifacts after processing.
     video_movement_csv = os.path.join(BASE_DIR, global_instance.current_video_file + "_movement.csv")
     fallback_movement_csv = os.path.join(BASE_DIR, "_movement.csv")
+    movement_csv_to_print = video_movement_csv if os.path.exists(video_movement_csv) else fallback_movement_csv
+    if os.path.exists(movement_csv_to_print):
+        with open(movement_csv_to_print, 'r', encoding='utf-8', newline='') as movement_csv_file:
+            print("=== MOVEMENT_CSV_START ===")
+            print(f"Path: {movement_csv_to_print}")
+            print(movement_csv_file.read())
+            print("=== MOVEMENT_CSV_END ===")
+    else:
+        print("=== MOVEMENT_CSV_START ===")
+        print("Path: (not found)")
+        print("=== MOVEMENT_CSV_END ===")
+
     for artifact in (csv_file, video_movement_csv, fallback_movement_csv):
         if os.path.exists(artifact):
             os.remove(artifact)
