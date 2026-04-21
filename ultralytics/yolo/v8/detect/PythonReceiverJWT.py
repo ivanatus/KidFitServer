@@ -11,6 +11,7 @@ import queue
 import threading
 import shutil
 import time
+import traceback
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -147,9 +148,11 @@ def analyze_video():
 
 
 def video_worker():
+    print("[video-worker] Worker thread is running and waiting for jobs")
     while True:
         job = video_job_queue.get()
         if job is STOP_SENTINEL:
+            print("[video-worker] Stop signal received, worker exiting")
             video_job_queue.task_done()
             break
 
@@ -211,6 +214,8 @@ def video_worker():
             print(f"[video-worker] Saved CSV result: {dst_csv}")
         except Exception as exc:
             set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
+            print(f"[video-worker] Job failed: {job_id} - {exc}")
+            traceback.print_exc()
         finally:
             video_job_queue.task_done()
 
@@ -221,6 +226,7 @@ def startup_worker():
     if worker_thread is None or not worker_thread.is_alive():
         worker_thread = threading.Thread(target=video_worker, name="video-worker", daemon=True)
         worker_thread.start()
+        print("[video-worker] Startup completed, worker thread started")
 
 
 @app.on_event("shutdown")
@@ -299,6 +305,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
         "decrypted_file": decrypted_file,
         "username": current_user["username"],
     })
+    print(f"[video-worker] Job queued: {job_id} (queue size: {video_job_queue.qsize()})")
     return JSONResponse(
         {
             "job_id": job_id,
