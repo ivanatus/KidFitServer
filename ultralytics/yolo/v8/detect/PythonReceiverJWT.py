@@ -160,6 +160,7 @@ def video_worker():
         encrypted_file = job["encrypted_file"]
         decrypted_file = job["decrypted_file"]
         username = job["username"]
+        user_uid = job.get("user_uid")
         set_job_state(job_id, status="running", started_at=now_iso())
         print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
 
@@ -177,26 +178,29 @@ def video_worker():
                 raise RuntimeError(error_msg)
 
             # predict.py may produce <video_prefix>.enc (often UID-based) in results/ or BASE_DIR.
-            # Normalize destination to results/<username>.enc.
+            # Normalize destination to results/<uid>.enc (fallback: username).
             video_prefix = os.path.splitext(os.path.basename(decrypted_file))[0].split("_")[0]
+            result_stem = user_uid if user_uid else username
             src_enc_candidates = [
                 os.path.join(RESULT_DIR, f"{video_prefix}.enc"),
+                os.path.join(RESULT_DIR, f"{result_stem}.enc"),
                 os.path.join(RESULT_DIR, f"{username}.enc"),
                 os.path.join(BASE_DIR, f"{video_prefix}.enc"),
+                os.path.join(BASE_DIR, f"{result_stem}.enc"),
                 os.path.join(BASE_DIR, f"{username}.enc"),
             ]
             src_enc = next((p for p in src_enc_candidates if os.path.exists(p)), None)
             if src_enc is None:
                 raise FileNotFoundError(f"Encrypted result not found for job {job_id}")
 
-            dst_enc = os.path.join(RESULT_DIR, f"{username}.enc")
+            dst_enc = os.path.join(RESULT_DIR, f"{result_stem}.enc")
             if os.path.abspath(src_enc) != os.path.abspath(dst_enc) and os.path.exists(dst_enc):
                 os.remove(dst_enc)
             if os.path.abspath(src_enc) != os.path.abspath(dst_enc):
                 shutil.move(src_enc, dst_enc)
 
-            # Keep a plaintext snapshot for download/debug in results/<username>.csv
-            dst_csv = os.path.join(RESULT_DIR, f"{username}.csv")
+            # Keep a plaintext snapshot for download/debug in results/<uid>.csv (fallback: username).
+            dst_csv = os.path.join(RESULT_DIR, f"{result_stem}.csv")
             if os.path.exists(dst_csv):
                 os.remove(dst_csv)
             LEAdecryptCBC.decrypt_file(dst_enc, dst_csv)
@@ -296,6 +300,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
             "status": "queued",
             "filename": file.filename,
             "decrypted_filename": output_name,
+            "result_stem": current_user.get("UID", current_user["username"]),
             "created_at": now_iso(),
             "started_at": None,
             "finished_at": None,
@@ -308,12 +313,14 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
         "encrypted_file": file_path,
         "decrypted_file": decrypted_file,
         "username": current_user["username"],
+        "user_uid": current_user.get("UID"),
     })
     print(f"[video-worker] Job queued: {job_id} (queue size: {video_job_queue.qsize()})")
     return JSONResponse(
         {
             "job_id": job_id,
             "filename": file.filename,
+            "result_file": f"{current_user.get('UID', current_user['username'])}.enc",
             "message": "File uploaded. Processing started in background.",
         },
         status_code=202,
