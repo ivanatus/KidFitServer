@@ -180,9 +180,27 @@ def video_worker():
                 os.remove(dst_enc)
             shutil.move(src_enc, dst_enc)
 
+            # Keep a plaintext snapshot for download/debug in results/<username>.csv
+            dst_csv = os.path.join(RESULT_DIR, f"{username}.csv")
+            if os.path.exists(dst_csv):
+                os.remove(dst_csv)
+            LEAdecryptCBC.decrypt_file(dst_enc, dst_csv)
+
+            # Remove intermediate per-video CSV artifacts from detect storage
+            video_basename = os.path.basename(decrypted_file)
+            intermediate_csv_paths = [
+                os.path.join(BASE_DIR, f"{video_basename}.csv"),
+                os.path.join(BASE_DIR, f"{video_basename}_movement.csv"),
+                os.path.join(BASE_DIR, "_movement.csv"),
+            ]
+            for intermediate_csv in intermediate_csv_paths:
+                if os.path.exists(intermediate_csv):
+                    os.remove(intermediate_csv)
+
             set_job_state(job_id, status="done", finished_at=now_iso())
             print(f"[video-worker] Video processing finished: {job_id} ({os.path.basename(decrypted_file)})")
             print(f"[video-worker] Saved encrypted result: {dst_enc}")
+            print(f"[video-worker] Saved CSV result: {dst_csv}")
         except Exception as exc:
             set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
         finally:
