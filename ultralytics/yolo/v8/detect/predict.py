@@ -637,19 +637,39 @@ def analyze_plot():
     os.makedirs(results_dir, exist_ok=True)
     username_csv = os.path.join(BASE_DIR, f"{user}.csv")
     username_enc = os.path.join(results_dir, f"{user}.enc")
-    fieldnames = ['date', 'time', 'movement']
-
-    # If previous data for this user exists, decrypt and append; otherwise initialize CSV.
+    # If previous data for this user exists, decrypt first.
     if os.path.exists(username_enc):
         LEAdecryptCBC.decrypt_file(username_enc, username_csv)
-    else:
-        with open(username_csv, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writerow({'date': 'Date', 'time': 'Time', 'movement': 'Movement'})
 
-    with open(username_csv, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writerow({'date': date, 'time': time, 'movement': movement})
+    # Load existing rows (if any), append current result, then keep one averaged row per date.
+    if os.path.exists(username_csv):
+        daily_df = pd.read_csv(username_csv)
+    else:
+        daily_df = pd.DataFrame(columns=['date', 'time', 'movement'])
+
+    # Normalize legacy header/data variations.
+    daily_df.columns = [str(col).strip().lower() for col in daily_df.columns]
+    for col in ['date', 'time', 'movement']:
+        if col not in daily_df.columns:
+            daily_df[col] = ''
+    daily_df = daily_df[['date', 'time', 'movement']]
+    daily_df = daily_df[daily_df['date'].astype(str).str.lower() != 'date']
+    daily_df = daily_df[daily_df['movement'].astype(str).str.lower() != 'movement']
+    daily_df['movement'] = pd.to_numeric(daily_df['movement'], errors='coerce')
+    daily_df = daily_df.dropna(subset=['movement'])
+
+    # Add current video result and aggregate by day.
+    new_row = pd.DataFrame([{'date': date, 'time': time, 'movement': float(movement)}])
+    daily_df = pd.concat([daily_df, new_row], ignore_index=True)
+    daily_df['date'] = daily_df['date'].astype(str).str.strip()
+    daily_df = daily_df[daily_df['date'] != '']
+    aggregated = daily_df.groupby('date', as_index=False)['movement'].mean()
+    aggregated['time'] = 'avg'
+    aggregated = aggregated[['date', 'time', 'movement']]
+    aggregated['movement'] = aggregated['movement'].round(6)
+
+    # Persist plaintext temp CSV, then encrypt.
+    aggregated.to_csv(username_csv, index=False)
 
     LEAencryptCBC.encrypt_file(username_csv, username_enc)
     if os.path.exists(username_csv):
