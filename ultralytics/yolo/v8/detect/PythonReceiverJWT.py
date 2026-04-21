@@ -173,11 +173,18 @@ def video_worker():
             result = analyze_video()
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
+            # Print only the final CSV dump block from predict.py output.
             if result.stdout:
-                print(result.stdout, end="")
-            if result.stderr:
-                print(result.stderr, end="")
+                marker_start = "=== UID_CSV_BEFORE_ENCRYPTION_START ==="
+                marker_end = "=== UID_CSV_BEFORE_ENCRYPTION_END ==="
+                start_idx = result.stdout.find(marker_start)
+                end_idx = result.stdout.find(marker_end)
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    end_idx += len(marker_end)
+                    print(result.stdout[start_idx:end_idx])
             if result.returncode != 0:
+                if result.stderr:
+                    print(result.stderr, end="")
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
                 raise RuntimeError(error_msg)
 
