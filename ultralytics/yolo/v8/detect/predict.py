@@ -670,6 +670,9 @@ def analyze_plot():
 
     # Persist plaintext temp CSV, then encrypt.
     aggregated.to_csv(username_csv, index=False)
+    with open(username_csv, 'r', encoding='utf-8', newline='') as csvfile:
+        print(f"Contents before encryption ({username_csv}):")
+        print(csvfile.read())
 
     LEAencryptCBC.encrypt_file(username_csv, username_enc)
     if os.path.exists(username_csv):
