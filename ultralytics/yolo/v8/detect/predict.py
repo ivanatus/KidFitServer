@@ -565,7 +565,7 @@ def predict(cfg):
 
 def analyze_plot():
     """Analysis of output results."""
-    csv_file = global_instance.current_video_file + ".csv"
+    csv_file = os.path.join(BASE_DIR, global_instance.current_video_file + ".csv")
 
     df = pd.read_csv(csv_file) #data frame from csv file using Pandas
 
@@ -624,31 +624,47 @@ def analyze_plot():
         movement = 0
 
     print(f"Movement in this video: {movement}")
-    user = global_instance.current_video_file.split("_")
-    time = user[2].split(".")
-    time = time[0]
-    date = user[1]
-    user = user[0]
+    parts = global_instance.current_video_file.split("_")
+    user = parts[0]
+    date = parts[1] if len(parts) > 1 else ""
+    time = parts[2].split(".")[0] if len(parts) > 2 else ""
 
     print(f"User: {user}")
     print(f"Date: {date}")
     print(f"Time: {time}")
-    
-    # If previous data for this user exists - decrypt it
-    if os.path.exists(os.path.join(BASE_DIR, "results", user, ".enc")):
-        LEAdecryptCBC.decrypt_file(os.path.join(BASE_DIR, "results", user, ".enc"), user + ".csv")
+
+    results_dir = os.path.join(BASE_DIR, "results")
+    os.makedirs(results_dir, exist_ok=True)
+    username_csv = os.path.join(BASE_DIR, f"{user}.csv")
+    username_enc = os.path.join(results_dir, f"{user}.enc")
+    fieldnames = ['date', 'time', 'movement']
+
+    # If previous data for this user exists, decrypt and append; otherwise initialize CSV.
+    if os.path.exists(username_enc):
+        LEAdecryptCBC.decrypt_file(username_enc, username_csv)
     else:
-         with open(user + '.csv', 'a', newline='') as csvfile:
-            fieldnames = ['date', 'time', 'movement']
+        with open(username_csv, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writerow({'date': 'Date', 'time': 'Time', 'movement': 'Movement'})
 
-    with open(user + ".csv", 'a', newline='') as csvfile:
+    with open(username_csv, 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writerow({'date': date, 'time': time, 'movement': movement})
 
-    LEAencryptCBC.encrypt_file(user + ".csv", os.path.join(BASE_DIR, "results", user, ".enc"))
-    os.remove(user + ".csv")
+    LEAencryptCBC.encrypt_file(username_csv, username_enc)
+    if os.path.exists(username_csv):
+        os.remove(username_csv)
+
+    # Cleanup intermediate per-video artifacts after processing.
+    video_movement_csv = os.path.join(BASE_DIR, global_instance.current_video_file + "_movement.csv")
+    fallback_movement_csv = os.path.join(BASE_DIR, "_movement.csv")
+    for artifact in (csv_file, video_movement_csv, fallback_movement_csv):
+        if os.path.exists(artifact):
+            os.remove(artifact)
+
+    processed_video_path = os.path.join(BASE_DIR, "video", global_instance.current_video_file)
+    if os.path.exists(processed_video_path):
+        os.remove(processed_video_path)
 
 
 """
