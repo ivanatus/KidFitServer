@@ -176,9 +176,12 @@ def video_worker():
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
                 raise RuntimeError(error_msg)
 
-            # predict.py produces <video_prefix>.enc in BASE_DIR; normalize destination to results/<username>.enc
+            # predict.py may produce <video_prefix>.enc (often UID-based) in results/ or BASE_DIR.
+            # Normalize destination to results/<username>.enc.
             video_prefix = os.path.splitext(os.path.basename(decrypted_file))[0].split("_")[0]
             src_enc_candidates = [
+                os.path.join(RESULT_DIR, f"{video_prefix}.enc"),
+                os.path.join(RESULT_DIR, f"{username}.enc"),
                 os.path.join(BASE_DIR, f"{video_prefix}.enc"),
                 os.path.join(BASE_DIR, f"{username}.enc"),
             ]
@@ -187,9 +190,10 @@ def video_worker():
                 raise FileNotFoundError(f"Encrypted result not found for job {job_id}")
 
             dst_enc = os.path.join(RESULT_DIR, f"{username}.enc")
-            if os.path.exists(dst_enc):
+            if os.path.abspath(src_enc) != os.path.abspath(dst_enc) and os.path.exists(dst_enc):
                 os.remove(dst_enc)
-            shutil.move(src_enc, dst_enc)
+            if os.path.abspath(src_enc) != os.path.abspath(dst_enc):
+                shutil.move(src_enc, dst_enc)
 
             # Keep a plaintext snapshot for download/debug in results/<username>.csv
             dst_csv = os.path.join(RESULT_DIR, f"{username}.csv")
