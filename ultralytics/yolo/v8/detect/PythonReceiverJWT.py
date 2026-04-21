@@ -10,6 +10,7 @@ import sys
 import queue
 import threading
 import shutil
+import time
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -37,6 +38,9 @@ video_jobs = {}
 video_jobs_lock = threading.Lock()
 worker_thread = None
 STOP_SENTINEL = object()
+# CV runtime knobs (change these to trade speed vs accuracy)
+CV_MODEL = "yolov8s.pt"
+CV_IMGSZ = 640
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -130,7 +134,8 @@ def analyze_video():
     predict_command = [
         "python",
         predict_script_path,
-        "model=yolov8l.pt",
+        f"model={CV_MODEL}",
+        f"imgsz={CV_IMGSZ}",
         "show=False",
         "source=video",
         "save=False",
@@ -160,7 +165,10 @@ def video_worker():
             if os.path.exists(encrypted_file):
                 os.remove(encrypted_file)
 
+            cv_start = time.perf_counter()
             result = analyze_video()
+            cv_duration_sec = round(time.perf_counter() - cv_start, 3)
+            print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
             if result.returncode != 0:
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
                 raise RuntimeError(error_msg)
@@ -197,7 +205,7 @@ def video_worker():
                 if os.path.exists(intermediate_csv):
                     os.remove(intermediate_csv)
 
-            set_job_state(job_id, status="done", finished_at=now_iso())
+            set_job_state(job_id, status="done", finished_at=now_iso(), cv_duration_sec=cv_duration_sec)
             print(f"[video-worker] Video processing finished: {job_id} ({os.path.basename(decrypted_file)})")
             print(f"[video-worker] Saved encrypted result: {dst_enc}")
             print(f"[video-worker] Saved CSV result: {dst_csv}")
@@ -281,6 +289,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
             "created_at": now_iso(),
             "started_at": None,
             "finished_at": None,
+            "cv_duration_sec": None,
             "error": None,
         }
 
