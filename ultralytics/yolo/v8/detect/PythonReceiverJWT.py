@@ -39,6 +39,10 @@ video_jobs = {}
 video_jobs_lock = threading.Lock()
 worker_thread = None
 STOP_SENTINEL = object()
+user_db_cache = None
+user_db_cache_ts = None
+user_db_lock = threading.Lock()
+USER_DB_CACHE_TTL_SEC = 300
 # CV runtime knobs (change these to trade speed vs accuracy)
 CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 640
@@ -50,21 +54,29 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     
 # Decrypt and get user database from csv
 def get_user_database():
-    LEAdecryptCBC.decrypt_file("DataBase.enc", "DataBase.csv")
-    df = pd.read_csv("DataBase.csv", encoding="latin1")
-    df.columns = [col.strip().lower() for col in df.columns]
-    df["password"] = df["password"].astype(str)
+    global user_db_cache, user_db_cache_ts
+    now = time.time()
+    with user_db_lock:
+        if user_db_cache is not None and user_db_cache_ts is not None and (now - user_db_cache_ts) < USER_DB_CACHE_TTL_SEC:
+            return user_db_cache
 
-    fake_users_db = {
-        row["username"]: {
-            "username": row["username"],
-            "UID": str(row["uid"]),
-            "hashed_password": pwd_context.hash(str(row["password"]))
+        LEAdecryptCBC.decrypt_file("DataBase.enc", "DataBase.csv")
+        df = pd.read_csv("DataBase.csv", encoding="latin1")
+        df.columns = [col.strip().lower() for col in df.columns]
+        df["password"] = df["password"].astype(str)
+
+        fake_users_db = {
+            row["username"]: {
+                "username": row["username"],
+                "UID": str(row["uid"]),
+                "hashed_password": pwd_context.hash(str(row["password"]))
+            }
+            for _, row in df.iterrows()
         }
-        for _, row in df.iterrows()
-    }
-    os.remove("DataBase.csv")
-    return fake_users_db
+        os.remove("DataBase.csv")
+        user_db_cache = fake_users_db
+        user_db_cache_ts = now
+        return fake_users_db
 
 # Secret key for JWT
 SECRET_KEY = "my_jwt_secret_key"
