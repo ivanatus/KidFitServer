@@ -496,7 +496,7 @@ class DetectionPredictor(BasePredictor):
             # =========================
             # Write to CSV
             # =========================
-            csv_name = global_instance.current_video_file + '_movement.csv'
+            csv_name = os.path.join(BASE_DIR, global_instance.current_video_file + '_movement.csv')
             with open(csv_name, 'a', newline='') as csvfile:
                 fieldnames = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -532,11 +532,11 @@ def predict(cfg):
             predictor = DetectionPredictor(cfg)
             predictor(filename.path)
             global_instance.video_files.append(filename.name)
-            with open(global_instance.current_video_file + '.csv', 'a', newline='') as csvfile:
+            csv_path = os.path.join(BASE_DIR, global_instance.current_video_file + '.csv')
+            with open(csv_path, 'a', newline='') as csvfile:
                 fieldnames = ['center x', 'center y', 'frame', 'people in frame']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writerow({'center x': 'center x', 'center y': 'center y', 'frame': 'frame', 'people in frame': 'people in frame'})
-            csv_path = global_instance.current_video_file + '.csv'
             has_data_row = False
             with open(csv_path, 'r', newline='') as csvfile:
                 reader = csv.DictReader(csvfile, fieldnames=fieldnames)
@@ -565,63 +565,23 @@ def predict(cfg):
 
 def analyze_plot():
     """Analysis of output results."""
-    csv_file = os.path.join(BASE_DIR, global_instance.current_video_file + ".csv")
+    movement_csv = os.path.join(BASE_DIR, global_instance.current_video_file + "_movement.csv")
+    if not os.path.exists(movement_csv):
+        movement_csv = os.path.join(BASE_DIR, "_movement.csv")
 
-    df = pd.read_csv(csv_file) #data frame from csv file using Pandas
-
-    #initialization of variables
-    movement_values = []
-    grouped = df.groupby('frame')
-    one_person = False
-    x_array = []
-    y_array = []
-
-    #Movement analysis per frame for entire video
-    for frame, frame_data in grouped:
-        if frame_data.empty: continue
-        
-        center_x_values = frame_data['center x'].values
-        center_y_values = frame_data['center y'].values
-        center_x_values = center_x_values[center_x_values != 'center x']
-        center_y_values = center_y_values[center_y_values != 'center y']
-        ppl = frame_data['people in frame'].values[0]
-        if(ppl == "people in frame"): break
-
-        #num_people = int(frame_data['people in frame'].iloc[0])
-        num_people = int(ppl)
-
-        if num_people == 1:
-            one_person = True
-            x_array.append(center_x_values[0])
-            y_array.append(center_y_values[0])
-            continue
-
-        # Izračunajte srednju vrijednost kretanja za ovaj frame
-        total_movement = 0
-        for i in range(num_people):
-            dx = float(center_x_values[i]) - float(center_x_values[i - 1])
-            dy = float(center_y_values[i]) - float(center_y_values[i - 1])
-            displacement = np.sqrt(dx**2 + dy**2)
-            total_movement += displacement
-
-        # Srednja vrijednost kretanja za ovaj frame
-        if num_people > 0:
-            average_movement = total_movement / num_people
-            movement_values.append(average_movement)
+    movement = 0.0
+    if os.path.exists(movement_csv):
+        movement_columns = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
+        movement_df = pd.read_csv(movement_csv, names=movement_columns, header=None)
+        movement_df['speed'] = pd.to_numeric(movement_df['speed'], errors='coerce')
+        movement_df = movement_df.dropna(subset=['speed'])
+        if not movement_df.empty:
+            movement = float(movement_df['speed'].mean())
+            print(f"Movement rows used: {len(movement_df)}")
         else:
-            movement_values.append(0.0)
-
-    if one_person:
-        for i in range(1, len(x_array)):
-            dx = float(x_array[i]) - float(x_array[i - 1])
-            dy = float(y_array[i]) - float(y_array[i - 1])
-            displacement = np.sqrt(dx**2 + dy**2)
-            movement_values.append(displacement)
-    if len(movement_values) > 0:
-        movement = np.array(movement_values).mean()
-        print("Nije detektirano kretanje u videu.")
+            print("Nije detektirano kretanje u videu (movement CSV has no valid speed rows).")
     else:
-        movement = 0
+        print("Nije detektirano kretanje u videu (movement CSV not found).")
 
     print(f"Movement in this video: {movement}")
     parts = global_instance.current_video_file.split("_")
@@ -637,17 +597,15 @@ def analyze_plot():
     os.makedirs(results_dir, exist_ok=True)
     username_csv = os.path.join(BASE_DIR, f"{user}.csv")
     username_enc = os.path.join(results_dir, f"{user}.enc")
-    # If previous data for this user exists, decrypt first.
+
     if os.path.exists(username_enc):
         LEAdecryptCBC.decrypt_file(username_enc, username_csv)
 
-    # Load existing rows (if any), append current result, then keep one averaged row per date.
     if os.path.exists(username_csv):
         daily_df = pd.read_csv(username_csv)
     else:
         daily_df = pd.DataFrame(columns=['date', 'time', 'movement'])
 
-    # Normalize legacy header/data variations.
     daily_df.columns = [str(col).strip().lower() for col in daily_df.columns]
     for col in ['date', 'time', 'movement']:
         if col not in daily_df.columns:
@@ -658,7 +616,6 @@ def analyze_plot():
     daily_df['movement'] = pd.to_numeric(daily_df['movement'], errors='coerce')
     daily_df = daily_df.dropna(subset=['movement'])
 
-    # Add current video result and aggregate by day.
     new_row = pd.DataFrame([{'date': date, 'time': time, 'movement': float(movement)}])
     daily_df = pd.concat([daily_df, new_row], ignore_index=True)
     daily_df['date'] = daily_df['date'].astype(str).str.strip()
@@ -668,7 +625,6 @@ def analyze_plot():
     aggregated = aggregated[['date', 'time', 'movement']]
     aggregated['movement'] = aggregated['movement'].round(6)
 
-    # Persist plaintext temp CSV, then encrypt.
     aggregated.to_csv(username_csv, index=False)
     with open(username_csv, 'r', encoding='utf-8', newline='') as csvfile:
         print("=== UID_CSV_BEFORE_ENCRYPTION_START ===")
@@ -680,7 +636,7 @@ def analyze_plot():
     if os.path.exists(username_csv):
         os.remove(username_csv)
 
-    # Cleanup intermediate per-video artifacts after processing.
+    csv_file = os.path.join(BASE_DIR, global_instance.current_video_file + ".csv")
     video_movement_csv = os.path.join(BASE_DIR, global_instance.current_video_file + "_movement.csv")
     fallback_movement_csv = os.path.join(BASE_DIR, "_movement.csv")
     movement_csv_to_print = video_movement_csv if os.path.exists(video_movement_csv) else fallback_movement_csv
@@ -908,3 +864,4 @@ if __name__ == "__main__":
         global_instance.current_video_file = file_name
         print(f"global_instance.current_video_file: {global_instance.current_video_file}")
         print(f"Attempting to read file: {file_name}")
+
