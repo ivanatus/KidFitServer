@@ -90,11 +90,16 @@ def flush_movement_rows(csv_path):
     rows = movement_csv_buffers.get(csv_path)
     if not rows:
         return
+    rows_count = len(rows)
     with open(csv_path, 'a', newline='') as csvfile:
         fieldnames = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writerows(rows)
     movement_csv_buffers[csv_path] = []
+    print("=== MOVEMENT_BUFFER_FLUSH_START ===")
+    print(f"Path: {csv_path}")
+    print(f"Rows written: {rows_count}")
+    print("=== MOVEMENT_BUFFER_FLUSH_END ===")
 
 def init_tracker(): 
     """Initialize the DeepSort tracker with configuration settings.

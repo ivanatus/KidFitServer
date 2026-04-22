@@ -44,8 +44,8 @@ user_db_cache_ts = None
 user_db_lock = threading.Lock()
 USER_DB_CACHE_TTL_SEC = 300
 # CV runtime knobs (change these to trade speed vs accuracy)
-CV_MODEL = "yolov8l.pt"
-CV_IMGSZ = 640
+CV_MODEL = "yolov8n.pt"
+CV_IMGSZ = 512
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -188,6 +188,7 @@ def video_worker():
             # Print only the final CSV dump block from predict.py output.
             if result.stdout:
                 marker_pairs = [
+                    ("=== MOVEMENT_BUFFER_FLUSH_START ===", "=== MOVEMENT_BUFFER_FLUSH_END ==="),
                     ("=== MOVEMENT_CSV_START ===", "=== MOVEMENT_CSV_END ==="),
                     ("=== UID_CSV_BEFORE_ENCRYPTION_START ===", "=== UID_CSV_BEFORE_ENCRYPTION_END ==="),
                 ]
