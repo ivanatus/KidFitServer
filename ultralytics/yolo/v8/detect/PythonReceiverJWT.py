@@ -185,22 +185,12 @@ def video_worker():
             result = analyze_video()
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
-            # Print only the final CSV dump block from predict.py output.
+            # Print full predict.py output from subprocess into worker logs.
             if result.stdout:
-                marker_pairs = [
-                    ("=== MOVEMENT_BUFFER_FLUSH_START ===", "=== MOVEMENT_BUFFER_FLUSH_END ==="),
-                    ("=== MOVEMENT_CSV_START ===", "=== MOVEMENT_CSV_END ==="),
-                    ("=== UID_CSV_BEFORE_ENCRYPTION_START ===", "=== UID_CSV_BEFORE_ENCRYPTION_END ==="),
-                ]
-                for marker_start, marker_end in marker_pairs:
-                    start_idx = result.stdout.find(marker_start)
-                    end_idx = result.stdout.find(marker_end)
-                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        end_idx += len(marker_end)
-                        print(result.stdout[start_idx:end_idx])
+                print(result.stdout, end="")
+            if result.stderr:
+                print(result.stderr, end="")
             if result.returncode != 0:
-                if result.stderr:
-                    print(result.stderr, end="")
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
                 raise RuntimeError(error_msg)
 
