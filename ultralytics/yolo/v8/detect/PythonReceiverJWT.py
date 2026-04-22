@@ -12,6 +12,7 @@ import threading
 import shutil
 import time
 import traceback
+import cv2
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -162,8 +163,13 @@ def analyze_video():
 def remux_video_for_stable_decode(video_path: str) -> bool:
     """Remux MP4 stream metadata to reduce FFmpeg/OpenCV frame retrieval errors."""
     temp_path = video_path + ".remux.mp4"
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path is None:
+        print("[video-worker] ffmpeg not found, falling back to OpenCV re-encode")
+        return reencode_video_with_opencv(video_path)
+
     cmd = [
-        "ffmpeg",
+        ffmpeg_path,
         "-y",
         "-loglevel",
         "error",
@@ -184,6 +190,56 @@ def remux_video_for_stable_decode(video_path: str) -> bool:
             print(result.stderr, end="")
     except Exception as exc:
         print(f"[video-worker] Video remux exception: {exc}")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    return False
+
+
+def reencode_video_with_opencv(video_path: str) -> bool:
+    """Fallback path when ffmpeg is unavailable: decode and re-encode frames with OpenCV."""
+    temp_path = video_path + ".reenc.mp4"
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"[video-worker] OpenCV re-encode failed: cannot open {video_path}")
+        return False
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if width <= 0 or height <= 0:
+        width, height = 640, 480
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(temp_path, fourcc, fps, (width, height))
+    if not writer.isOpened():
+        cap.release()
+        print(f"[video-worker] OpenCV re-encode failed: cannot create writer for {temp_path}")
+        return False
+
+    written = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if frame is None or frame.size == 0:
+            continue
+        if frame.shape[1] != width or frame.shape[0] != height:
+            frame = cv2.resize(frame, (width, height))
+        writer.write(frame)
+        written += 1
+
+    cap.release()
+    writer.release()
+
+    try:
+        if written > 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+            os.replace(temp_path, video_path)
+            print(f"[video-worker] OpenCV re-encode successful: {video_path} (frames: {written})")
+            return True
+        print(f"[video-worker] OpenCV re-encode produced no frames: {video_path}")
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
