@@ -467,8 +467,9 @@ class DetectionPredictor(BasePredictor):
             # Precompute horizon line (can be dynamically adapted or kept fixed)
             y_horizon = int(0.2 * im0.shape[0])  # 20% from top — heuristic
 
-            # Draw bounding boxes as before
-            draw_boxes(im0, bbox_xyxy, self.model.names, object_id, identities)
+            # Draw overlays only when they are needed for display or saved visual output.
+            if self.args.show or self.args.save:
+                draw_boxes(im0, bbox_xyxy, self.model.names, object_id, identities)
 
             # =========================
             # Compute movement per object
