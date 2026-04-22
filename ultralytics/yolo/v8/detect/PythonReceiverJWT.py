@@ -20,6 +20,7 @@ import LEAdecryptCBC
 import LEAdecryptCTR
 import pandas as pd
 import subprocess
+import glob
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -175,18 +176,23 @@ def analyze_video():
             for export_command in export_commands:
                 print(f"[video-worker] Running export command: {export_command}")
                 export_result = subprocess.run(export_command, cwd=BASE_DIR, capture_output=True, text=True)
+                if export_result.stdout:
+                    print(export_result.stdout, end="")
+                if export_result.stderr:
+                    print(export_result.stderr, end="")
                 if export_result.returncode == 0:
                     exported = True
                     break
-                if export_result.stderr:
-                    print(export_result.stderr, end="")
 
             if exported:
-                # resolve exported XML path
-                if not os.path.exists(ov_model_xml) and os.path.isdir(ov_model_dir):
-                    xml_candidates = [f for f in os.listdir(ov_model_dir) if f.endswith(".xml")]
+                # Resolve exported XML path (Ultralytics may choose a different output folder).
+                if not os.path.exists(ov_model_xml):
+                    xml_candidates = glob.glob(os.path.join(BASE_DIR, "**", "*openvino_model", "*.xml"), recursive=True)
+                    if not xml_candidates:
+                        xml_candidates = glob.glob(os.path.join(BASE_DIR, "**", "*.xml"), recursive=True)
                     if xml_candidates:
-                        ov_model_xml = os.path.join(ov_model_dir, xml_candidates[0])
+                        xml_candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                        ov_model_xml = xml_candidates[0]
                 if os.path.exists(ov_model_xml):
                     print(f"[video-worker] OpenVINO export successful: {ov_model_xml}")
                     model_arg = ov_model_xml
