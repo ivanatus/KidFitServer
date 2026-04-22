@@ -72,6 +72,8 @@ traj_world = defaultdict(lambda: deque(maxlen=64))     # id -> deque of (x_world
 recent_bottoms_ref = deque(maxlen=HISTORY_WINDOW)
 # Global storage for previous positions
 object_states = {}  # {id: {'frame': int, 'x': float, 'y': float, 'depth': float}}
+MOVEMENT_CSV_FLUSH_EVERY_FRAMES = 10
+movement_csv_buffers = defaultdict(list)  # csv_path -> list[dict]
 
 
 
@@ -82,6 +84,17 @@ deepsort = None #variable to store the DeepSort tracker instance
 frame_class = -1
 
 global_instance = Globals()
+
+
+def flush_movement_rows(csv_path):
+    rows = movement_csv_buffers.get(csv_path)
+    if not rows:
+        return
+    with open(csv_path, 'a', newline='') as csvfile:
+        fieldnames = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writerows(rows)
+    movement_csv_buffers[csv_path] = []
 
 def init_tracker(): 
     """Initialize the DeepSort tracker with configuration settings.
@@ -497,11 +510,9 @@ class DetectionPredictor(BasePredictor):
             # Write to CSV
             # =========================
             csv_name = os.path.join(BASE_DIR, global_instance.current_video_file + '_movement.csv')
-            with open(csv_name, 'a', newline='') as csvfile:
-                fieldnames = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                for row in rows_to_write:
-                    writer.writerow(row)
+            movement_csv_buffers[csv_name].extend(rows_to_write)
+            if frame % MOVEMENT_CSV_FLUSH_EVERY_FRAMES == 0:
+                flush_movement_rows(csv_name)
             
         return log_string
     
@@ -566,8 +577,10 @@ def predict(cfg):
 def analyze_plot():
     """Analysis of output results."""
     movement_csv = os.path.join(BASE_DIR, global_instance.current_video_file + "_movement.csv")
+    flush_movement_rows(movement_csv)
     if not os.path.exists(movement_csv):
         movement_csv = os.path.join(BASE_DIR, "_movement.csv")
+        flush_movement_rows(movement_csv)
 
     movement = 0.0
     if os.path.exists(movement_csv):
