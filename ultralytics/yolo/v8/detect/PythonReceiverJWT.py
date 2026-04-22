@@ -152,7 +152,7 @@ def analyze_video():
         f"imgsz={CV_IMGSZ}",
         "show=False",
         "source=video",
-        "save=False",
+        "save=True",
         "save_txt=False"
     ]
     print("Start analysis")
