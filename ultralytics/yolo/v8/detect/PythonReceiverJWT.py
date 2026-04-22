@@ -150,10 +150,10 @@ def analyze_video():
         predict_script_path,
         f"model={CV_MODEL}",
         f"imgsz={CV_IMGSZ}",
-        "classes=0",
-        "show=False",
+        "cls=0",
+        "show=True",
         "source=video",
-        "save=True",
+        "save=False",
         "save_txt=False"
     ]
     print("Start analysis")
