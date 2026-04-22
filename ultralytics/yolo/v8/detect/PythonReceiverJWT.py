@@ -155,19 +155,18 @@ def analyze_video():
             export_commands = [
                 [
                     "yolo",
-                    "export",
+                    "mode=export",
                     f"model={os.path.join(BASE_DIR, CV_MODEL)}",
                     "format=openvino",
                     f"imgsz={CV_IMGSZ}",
                 ],
                 [
                     "python",
-                    "-m",
-                    "ultralytics",
-                    "export",
-                    f"model={os.path.join(BASE_DIR, CV_MODEL)}",
-                    "format=openvino",
-                    f"imgsz={CV_IMGSZ}",
+                    "-c",
+                    (
+                        "from ultralytics import YOLO; "
+                        f"YOLO(r'{os.path.join(BASE_DIR, CV_MODEL)}').export(format='openvino', imgsz={CV_IMGSZ})"
+                    ),
                 ],
             ]
             print("[video-worker] OpenVINO model not found, exporting...")
