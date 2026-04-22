@@ -44,7 +44,7 @@ user_db_cache_ts = None
 user_db_lock = threading.Lock()
 USER_DB_CACHE_TTL_SEC = 300
 # CV runtime knobs (change these to trade speed vs accuracy)
-CV_MODEL = "yolov8n.pt"
+CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 512
 
 # Limiter
