@@ -159,6 +159,37 @@ def analyze_video():
     return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True)
 
 
+def remux_video_for_stable_decode(video_path: str) -> bool:
+    """Remux MP4 stream metadata to reduce FFmpeg/OpenCV frame retrieval errors."""
+    temp_path = video_path + ".remux.mp4"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        video_path,
+        "-c",
+        "copy",
+        temp_path,
+    ]
+    try:
+        result = subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, text=True)
+        if result.returncode == 0 and os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+            os.replace(temp_path, video_path)
+            print(f"[video-worker] Video remux successful: {video_path}")
+            return True
+        print(f"[video-worker] Video remux failed (returncode={result.returncode}): {video_path}")
+        if result.stderr:
+            print(result.stderr, end="")
+    except Exception as exc:
+        print(f"[video-worker] Video remux exception: {exc}")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    return False
+
+
 def video_worker():
     print("[video-worker] Worker thread is running and waiting for jobs")
     while True:
@@ -180,6 +211,7 @@ def video_worker():
             LEAdecryptCTR.decrypt_video(encrypted_file, decrypted_file)
             if os.path.exists(encrypted_file):
                 os.remove(encrypted_file)
+            remux_video_for_stable_decode(decrypted_file)
 
             cv_start = time.perf_counter()
             result = analyze_video()
