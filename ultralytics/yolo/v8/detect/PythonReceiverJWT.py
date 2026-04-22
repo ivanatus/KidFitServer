@@ -154,13 +154,6 @@ def analyze_video():
         if not os.path.exists(ov_model_xml):
             export_commands = [
                 [
-                    "yolo",
-                    "mode=export",
-                    f"model={os.path.join(BASE_DIR, CV_MODEL)}",
-                    "format=openvino",
-                    f"imgsz={CV_IMGSZ}",
-                ],
-                [
                     "python",
                     "-c",
                     (
@@ -168,10 +161,19 @@ def analyze_video():
                         f"YOLO(r'{os.path.join(BASE_DIR, CV_MODEL)}').export(format='openvino', imgsz={CV_IMGSZ})"
                     ),
                 ],
+                [
+                    "python",
+                    "-c",
+                    (
+                        "from ultralytics.yolo.engine.model import YOLO; "
+                        f"YOLO(r'{os.path.join(BASE_DIR, CV_MODEL)}').export(format='openvino', imgsz={CV_IMGSZ})"
+                    ),
+                ],
             ]
             print("[video-worker] OpenVINO model not found, exporting...")
             exported = False
             for export_command in export_commands:
+                print(f"[video-worker] Running export command: {export_command}")
                 export_result = subprocess.run(export_command, cwd=BASE_DIR, capture_output=True, text=True)
                 if export_result.returncode == 0:
                     exported = True
