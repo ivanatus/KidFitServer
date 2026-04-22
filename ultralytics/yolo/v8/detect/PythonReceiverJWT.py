@@ -20,7 +20,6 @@ import LEAdecryptCBC
 import LEAdecryptCTR
 import pandas as pd
 import subprocess
-import glob
 
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -48,8 +47,6 @@ USER_DB_CACHE_TTL_SEC = 300
 # CV runtime knobs (change these to trade speed vs accuracy)
 CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 512
-CV_USE_OPENVINO = True
-CV_OPENVINO_MODEL_DIR = "yolov8l_openvino_model"
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -147,67 +144,11 @@ def set_job_state(job_id, **updates):
 
 def analyze_video():
     """Run predict.py on all of the videos from video folder"""
-    model_arg = CV_MODEL
-    if CV_USE_OPENVINO:
-        ov_model_dir = os.path.join(BASE_DIR, CV_OPENVINO_MODEL_DIR)
-        ov_model_xml = os.path.join(ov_model_dir, "yolov8l.xml")
-
-        if not os.path.exists(ov_model_xml):
-            export_commands = [
-                [
-                    "python",
-                    "-c",
-                    (
-                        "from ultralytics import YOLO; "
-                        f"YOLO(r'{os.path.join(BASE_DIR, CV_MODEL)}').export(format='openvino', imgsz={CV_IMGSZ})"
-                    ),
-                ],
-                [
-                    "python",
-                    "-c",
-                    (
-                        "from ultralytics.yolo.engine.model import YOLO; "
-                        f"YOLO(r'{os.path.join(BASE_DIR, CV_MODEL)}').export(format='openvino', imgsz={CV_IMGSZ})"
-                    ),
-                ],
-            ]
-            print("[video-worker] OpenVINO model not found, exporting...")
-            exported = False
-            for export_command in export_commands:
-                print(f"[video-worker] Running export command: {export_command}")
-                export_result = subprocess.run(export_command, cwd=BASE_DIR, capture_output=True, text=True)
-                if export_result.stdout:
-                    print(export_result.stdout, end="")
-                if export_result.stderr:
-                    print(export_result.stderr, end="")
-                if export_result.returncode == 0:
-                    exported = True
-                    break
-
-            if exported:
-                # Resolve exported XML path (Ultralytics may choose a different output folder).
-                if not os.path.exists(ov_model_xml):
-                    xml_candidates = glob.glob(os.path.join(BASE_DIR, "**", "*openvino_model", "*.xml"), recursive=True)
-                    if not xml_candidates:
-                        xml_candidates = glob.glob(os.path.join(BASE_DIR, "**", "*.xml"), recursive=True)
-                    if xml_candidates:
-                        xml_candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-                        ov_model_xml = xml_candidates[0]
-                if os.path.exists(ov_model_xml):
-                    print(f"[video-worker] OpenVINO export successful: {ov_model_xml}")
-                    model_arg = ov_model_xml
-                else:
-                    print("[video-worker] OpenVINO export ran but XML model not found, falling back to .pt")
-            else:
-                print("[video-worker] OpenVINO export failed, falling back to .pt model")
-        else:
-            model_arg = ov_model_xml
-
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
     predict_command = [
         "python",
         predict_script_path,
-        f"model={model_arg}",
+        f"model={CV_MODEL}",
         f"imgsz={CV_IMGSZ}",
         "cls=0",
         "max_det=90",
