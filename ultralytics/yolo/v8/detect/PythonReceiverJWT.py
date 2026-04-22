@@ -13,6 +13,7 @@ import shutil
 import time
 import traceback
 import cv2
+import re
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -47,6 +48,8 @@ USER_DB_CACHE_TTL_SEC = 300
 # CV runtime knobs (change these to trade speed vs accuracy)
 CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 512
+CPU_TORCH_THREADS = max(1, (os.cpu_count() or 2) - 1)
+CPU_OPENCV_THREADS = max(1, min(4, os.cpu_count() or 1))
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -140,6 +143,18 @@ def set_job_state(job_id, **updates):
     with video_jobs_lock:
         if job_id in video_jobs:
             video_jobs[job_id].update(updates)
+
+
+def extract_movement_value(stdout: str):
+    if not stdout:
+        return None
+    matches = re.findall(r"Movement in this video:\s*([-+]?\d*\.?\d+)", stdout)
+    if not matches:
+        return None
+    try:
+        return float(matches[-1])
+    except ValueError:
+        return None
 
 
 def analyze_video():
@@ -264,6 +279,7 @@ def video_worker():
         decrypted_file = job["decrypted_file"]
         username = job["username"]
         user_uid = job.get("user_uid")
+        job_start = time.perf_counter()
         set_job_state(job_id, status="running", started_at=now_iso())
         print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
 
@@ -277,13 +293,11 @@ def video_worker():
             result = analyze_video()
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
-            # Print full predict.py output from subprocess into worker logs.
-            if result.stdout:
-                print(result.stdout, end="")
-            if result.stderr:
-                print(result.stderr, end="")
+            movement_value = extract_movement_value(result.stdout or "")
             if result.returncode != 0:
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
+                if result.stderr:
+                    print(result.stderr, end="")
                 raise RuntimeError(error_msg)
 
             # predict.py may produce <video_prefix>.enc (often UID-based) in results/ or BASE_DIR.
@@ -324,10 +338,23 @@ def video_worker():
                 if os.path.exists(intermediate_csv):
                     os.remove(intermediate_csv)
 
-            set_job_state(job_id, status="done", finished_at=now_iso(), cv_duration_sec=cv_duration_sec)
+            total_duration_sec = round(time.perf_counter() - job_start, 3)
+            set_job_state(
+                job_id,
+                status="done",
+                finished_at=now_iso(),
+                cv_duration_sec=cv_duration_sec,
+                total_duration_sec=total_duration_sec,
+                ending_movement=movement_value,
+            )
             print(f"[video-worker] Video processing finished: {job_id} ({os.path.basename(decrypted_file)})")
             print(f"[video-worker] Saved encrypted result: {dst_enc}")
             print(f"[video-worker] Removed plaintext CSV if present: {dst_csv}")
+            print(f"[video-worker] Total processing time: {total_duration_sec}s (job: {job_id})")
+            if movement_value is not None:
+                print(f"[video-worker] Ending movement calculation: {movement_value}")
+            else:
+                print("[video-worker] Ending movement calculation: not found in predict.py output")
         except Exception as exc:
             set_job_state(job_id, status="failed", finished_at=now_iso(), error=str(exc))
             print(f"[video-worker] Job failed: {job_id} - {exc}")
@@ -339,6 +366,17 @@ def video_worker():
 @app.on_event("startup")
 def startup_worker():
     global worker_thread
+    try:
+        import torch
+        torch.set_num_threads(CPU_TORCH_THREADS)
+        print(f"[video-worker] Torch threads set to: {CPU_TORCH_THREADS}")
+    except Exception as exc:
+        print(f"[video-worker] Torch thread tuning skipped: {exc}")
+    try:
+        cv2.setNumThreads(CPU_OPENCV_THREADS)
+        print(f"[video-worker] OpenCV threads set to: {CPU_OPENCV_THREADS}")
+    except Exception as exc:
+        print(f"[video-worker] OpenCV thread tuning skipped: {exc}")
     if worker_thread is None or not worker_thread.is_alive():
         worker_thread = threading.Thread(target=video_worker, name="video-worker", daemon=True)
         worker_thread.start()
