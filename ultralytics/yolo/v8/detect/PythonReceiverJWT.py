@@ -151,14 +151,16 @@ def analyze_video():
         f"model={CV_MODEL}",
         f"imgsz={CV_IMGSZ}",
         "cls=0",
-        "show=True",
+        "show=False",
         "source=video",
         "save=False",
         "save_txt=False"
     ]
     print("Start analysis")
     print(predict_command)
-    return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True)
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True, env=env)
 
 
 def remux_video_for_stable_decode(video_path: str) -> bool:
