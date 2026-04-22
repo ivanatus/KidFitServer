@@ -151,6 +151,7 @@ def analyze_video():
         f"model={CV_MODEL}",
         f"imgsz={CV_IMGSZ}",
         "cls=0",
+        "max_det=90",
         "show=False",
         "source=video",
         "save=False",
