@@ -530,11 +530,20 @@ def predict(cfg):
             if fps > 0:
                 duration_sec = total_frames / fps 
                 print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration_sec:.2f}s")
+            cap.release()
             
             global_instance.current_video_file = filename.name
             print(f"global_instance.current_video_file: {global_instance.current_video_file}")
             predictor = DetectionPredictor(cfg)
-            predictor(filename.path)
+            try:
+                predictor(filename.path)
+            except ZeroDivisionError:
+                # Ultralytics can divide by self.seen when decode yields zero processed frames.
+                # Keep pipeline alive and let downstream aggregation persist a zero-movement result.
+                print(
+                    f"Warning: no frames were processed for {filename.name}; "
+                    "continuing with zero-movement fallback."
+                )
             global_instance.video_files.append(filename.name)
             csv_path = os.path.join(BASE_DIR, global_instance.current_video_file + '.csv')
             with open(csv_path, 'a', newline='') as csvfile:
