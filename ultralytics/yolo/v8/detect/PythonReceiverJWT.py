@@ -161,7 +161,7 @@ def analyze_video():
     """Run predict.py on all of the videos from video folder"""
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
     predict_command = [
-        "python",
+        "/root/KidFitServer/venv/bin/python",
         predict_script_path,
         f"model={CV_MODEL}",
         f"imgsz={CV_IMGSZ}",
