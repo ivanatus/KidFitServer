@@ -27,6 +27,16 @@ from slowapi.util import get_remote_address
 from fastapi import Request
 from slowapi.errors import RateLimitExceeded
 
+# App version
+APK_PATH = "/root/KidFitServer/apk/app-release.apk"
+LATEST_VERSION = {
+    "versionCode": 1,
+    "versionName": "1.0",
+    "apkUrl": "https://82.165.249.157/apk",
+    "forceUpdate": False,
+    "releaseNotes": "Bug fixes and performance improvements."
+}
+
 # App setup
 app = FastAPI()
 UPLOAD_FOLDER = "video"
@@ -484,9 +494,22 @@ async def get_job_status(job_id: str, current_user: dict = Depends(get_current_u
 
 # Server health check
 @app.get("/health")
-def health():
+def health(app_version: str | None = Header(None), current_user: dict = Depends(get_current_user)):
     worker_alive = worker_thread is not None and worker_thread.is_alive()
-    return {"status": "ok", "worker_alive": worker_alive, "queued_jobs": video_job_queue.qsize()}
+    latest_version = LATEST_VERSION.get("versionName")
+    if app_version == latest_version:
+        return {"status": "ok", "worker_alive": worker_alive, "queued_jobs": video_job_queue.qsize()}
+    else:
+        return JSONResponse({"message": "Update needed!"}, status_code=300)
+    
+# App update
+@app.get("/apk")
+def download_apk(current_user: dict = Depends(get_current_user)):
+    return FileResponse(
+        APK_PATH,
+        media_type="application/vnd.android.package-archive",
+        filename="app-release.apk"
+    )
 
 
 if __name__ == "__main__":

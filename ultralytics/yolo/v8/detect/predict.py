@@ -524,12 +524,15 @@ def predict(cfg):
     for filename in os.scandir(source_directory):
         print("Filename ", filename)
         if filename.is_file() and filename.name.endswith('.mp4'):
+            video_processing_start = time.perf_counter()
             cap = cv2.VideoCapture(filename.path)
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             fps = cap.get(cv2.CAP_PROP_FPS)
             if fps > 0:
                 duration_sec = total_frames / fps 
-                print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration_sec:.2f}s")
+                print(f"[predict] Video metadata: file={filename.name}, frames={total_frames}, fps={fps:.3f}, duration={duration_sec:.2f}s")
+            else:
+                print(f"[predict] Video metadata: file={filename.name}, frames={total_frames}, fps=unknown, duration=unknown")
             cap.release()
             
             global_instance.current_video_file = filename.name
@@ -574,6 +577,11 @@ def predict(cfg):
                     writer.writerow({'center x': 0, 'center y': 0, 'frame': 0, 'people in frame': 0})
 
             analyze_plot()
+            total_processing_sec = time.perf_counter() - video_processing_start
+            print(
+                f"[predict] Video end-to-end processing time: "
+                f"{total_processing_sec:.3f}s (file={filename.name}, frames={total_frames})"
+            )
 
 
 def analyze_plot():
