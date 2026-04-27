@@ -30,8 +30,8 @@ from slowapi.errors import RateLimitExceeded
 # App version
 APK_PATH = "/root/KidFitServer/apk/app-release.apk"
 LATEST_VERSION = {
-    "versionCode": 1,
-    "versionName": "1.0",
+    "versionCode": 2,
+    "versionName": "1.1",
     "apkUrl": "https://82.165.249.157/apk",
     "forceUpdate": False,
     "releaseNotes": "Bug fixes and performance improvements."
