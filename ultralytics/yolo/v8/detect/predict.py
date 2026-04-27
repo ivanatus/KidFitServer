@@ -611,10 +611,12 @@ def analyze_plot():
     user = parts[0]
     date = parts[1] if len(parts) > 1 else ""
     time = parts[2].split(".")[0] if len(parts) > 2 else ""
+    app_version = os.getenv("KIDFIT_APP_VERSION", "unknown")
 
     print(f"User: {user}")
     print(f"Date: {date}")
     print(f"Time: {time}")
+    print(f"App version: {app_version}")
 
     results_dir = os.path.join(BASE_DIR, "results")
     os.makedirs(results_dir, exist_ok=True)
@@ -627,25 +629,29 @@ def analyze_plot():
     if os.path.exists(username_csv):
         daily_df = pd.read_csv(username_csv)
     else:
-        daily_df = pd.DataFrame(columns=['date', 'time', 'movement'])
+        daily_df = pd.DataFrame(columns=['date', 'movement', 'app_version'])
 
     daily_df.columns = [str(col).strip().lower() for col in daily_df.columns]
-    for col in ['date', 'time', 'movement']:
+    for col in ['date', 'movement', 'app_version']:
         if col not in daily_df.columns:
             daily_df[col] = ''
-    daily_df = daily_df[['date', 'time', 'movement']]
+    daily_df = daily_df[['date', 'movement', 'app_version']]
     daily_df = daily_df[daily_df['date'].astype(str).str.lower() != 'date']
     daily_df = daily_df[daily_df['movement'].astype(str).str.lower() != 'movement']
+    daily_df = daily_df[daily_df['app_version'].astype(str).str.lower() != 'app_version']
     daily_df['movement'] = pd.to_numeric(daily_df['movement'], errors='coerce')
     daily_df = daily_df.dropna(subset=['movement'])
 
-    new_row = pd.DataFrame([{'date': date, 'time': time, 'movement': float(movement)}])
+    new_row = pd.DataFrame([{'date': date, 'movement': float(movement), 'app_version': app_version}])
     daily_df = pd.concat([daily_df, new_row], ignore_index=True)
     daily_df['date'] = daily_df['date'].astype(str).str.strip()
+    daily_df['app_version'] = daily_df['app_version'].astype(str).str.strip()
     daily_df = daily_df[daily_df['date'] != '']
-    aggregated = daily_df.groupby('date', as_index=False)['movement'].mean()
-    aggregated['time'] = 'avg'
-    aggregated = aggregated[['date', 'time', 'movement']]
+    aggregated = daily_df.groupby('date', as_index=False).agg(
+        movement=('movement', 'mean'),
+        app_version=('app_version', lambda s: next((v for v in reversed([str(x).strip() for x in s.tolist()]) if v), 'unknown'))
+    )
+    aggregated = aggregated[['date', 'movement', 'app_version']]
     aggregated['movement'] = aggregated['movement'].round(6)
 
     aggregated.to_csv(username_csv, index=False)

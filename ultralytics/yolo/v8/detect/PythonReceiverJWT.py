@@ -167,7 +167,7 @@ def extract_movement_value(stdout: str):
         return None
 
 
-def analyze_video():
+def analyze_video(app_version: str):
     """Run predict.py on all of the videos from video folder"""
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
     predict_command = [
@@ -187,6 +187,7 @@ def analyze_video():
     print(predict_command)
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
+    env["KIDFIT_APP_VERSION"] = app_version
     return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True, env=env)
 
 
@@ -290,6 +291,7 @@ def video_worker():
         decrypted_file = job["decrypted_file"]
         username = job["username"]
         user_uid = job.get("user_uid")
+        app_version = job.get("app_version", "unknown")
         job_start = time.perf_counter()
         set_job_state(job_id, status="running", started_at=now_iso())
         print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
@@ -301,7 +303,7 @@ def video_worker():
             remux_video_for_stable_decode(decrypted_file)
 
             cv_start = time.perf_counter()
-            result = analyze_video()
+            result = analyze_video(app_version)
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
             movement_value = extract_movement_value(result.stdout or "")
@@ -441,7 +443,12 @@ async def download_file(filename: str, current_user: dict = Depends(get_current_
 # Android device sends video to server
 @app.post("/upload/")
 @limiter.limit("2/5minute") # limited to 2 uploads per 5 minutes
-async def upload_file(request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+async def upload_file(
+    request: Request,
+    file: UploadFile = File(...),
+    app_version: str | None = Header(None),
+    current_user: dict = Depends(get_current_user)
+):
     content = await file.read()
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
@@ -451,6 +458,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
     decrypted_file = os.path.join(UPLOAD_DIR, output_name)
 
     job_id = str(uuid4())
+    job_app_version = app_version if app_version else "unknown"
     with video_jobs_lock:
         video_jobs[job_id] = {
             "job_id": job_id,
@@ -458,6 +466,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
             "filename": file.filename,
             "decrypted_filename": output_name,
             "result_stem": current_user.get("UID", current_user["username"]),
+            "app_version": job_app_version,
             "created_at": now_iso(),
             "started_at": None,
             "finished_at": None,
@@ -471,6 +480,7 @@ async def upload_file(request: Request, file: UploadFile = File(...), current_us
         "decrypted_file": decrypted_file,
         "username": current_user["username"],
         "user_uid": current_user.get("UID"),
+        "app_version": job_app_version,
     })
     print(f"[video-worker] Job queued: {job_id} (queue size: {video_job_queue.qsize()})")
     return JSONResponse(
@@ -505,6 +515,7 @@ def health(app_version: str | None = Header(None), current_user: dict = Depends(
 # App update
 @app.get("/apk")
 def download_apk(current_user: dict = Depends(get_current_user)):
+    print("APK call in progress.")
     return FileResponse(
         APK_PATH,
         media_type="application/vnd.android.package-archive",
