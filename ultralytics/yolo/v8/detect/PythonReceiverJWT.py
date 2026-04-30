@@ -693,6 +693,7 @@ async def upload_calibration_bundle(
         raise HTTPException(status_code=500, detail=f"Calibration failed: {exc}")
 
     print(f"[calibration] UID {uid} uploaded {len(saved_files)} files to {save_dir}")
+    print(f"[calibration] Calibration {calibration}")
     return JSONResponse(
         {
             "message": "Calibration completed.",
