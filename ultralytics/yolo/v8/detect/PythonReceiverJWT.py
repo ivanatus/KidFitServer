@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Header, Request, Body
+from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Header, Request, Body, Form
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -41,10 +41,13 @@ LATEST_VERSION = {
 app = FastAPI()
 UPLOAD_FOLDER = "video"
 RESULT_FOLDER = "results"
+CALIBRATION_FOLDER = "calibration"
 UPLOAD_DIR = os.path.join(BASE_DIR, UPLOAD_FOLDER)
 RESULT_DIR = os.path.join(BASE_DIR, RESULT_FOLDER)
+CALIBRATION_DIR = os.path.join(BASE_DIR, CALIBRATION_FOLDER)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(RESULT_DIR, exist_ok=True)
+os.makedirs(CALIBRATION_DIR, exist_ok=True)
 revoked_tokens = set()
 video_job_queue = queue.Queue()
 video_jobs = {}
@@ -520,6 +523,57 @@ def download_apk(current_user: dict = Depends(get_current_user)):
         APK_PATH,
         media_type="application/vnd.android.package-archive",
         filename="app-release.apk"
+    )
+
+
+@app.post("/calibration/")
+@limiter.limit("10/5minute")
+async def upload_calibration_bundle(
+    request: Request,
+    uid: str = Form(...),
+    files: list[UploadFile] = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    token_uid = str(current_user.get("UID", ""))
+    if not token_uid:
+        raise HTTPException(status_code=401, detail="UID missing in token")
+    if uid != token_uid:
+        raise HTTPException(status_code=403, detail="UID does not match authenticated user")
+    if not files:
+        raise HTTPException(status_code=400, detail="No calibration files provided")
+
+    batch_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    save_dir = os.path.join(CALIBRATION_DIR, uid, batch_id)
+    os.makedirs(save_dir, exist_ok=True)
+
+    saved_files = []
+    for i, upload in enumerate(files, start=1):
+        original_name = os.path.basename(upload.filename or f"calibration_{i}.jpg")
+        if not original_name:
+            original_name = f"calibration_{i}.jpg"
+        file_path = os.path.join(save_dir, original_name)
+
+        content = await upload.read()
+        if len(content) == 0:
+            continue
+        with open(file_path, "wb") as f:
+            f.write(content)
+        saved_files.append(file_path)
+
+    if not saved_files:
+        raise HTTPException(status_code=400, detail="All uploaded calibration files were empty")
+
+    print(f"[calibration] UID {uid} uploaded {len(saved_files)} files to {save_dir}")
+    return JSONResponse(
+        {
+            "message": "Calibration bundle uploaded.",
+            "uid": uid,
+            "batch_id": batch_id,
+            "saved_count": len(saved_files),
+            "save_dir": save_dir,
+            "files": saved_files,
+        },
+        status_code=201,
     )
 
 
