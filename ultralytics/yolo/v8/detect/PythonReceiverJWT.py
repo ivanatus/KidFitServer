@@ -571,6 +571,9 @@ async def download_file(filename: str, current_user: dict = Depends(get_current_
 async def upload_file(
     request: Request,
     file: UploadFile = File(...),
+    calibration_is_calibrated: str | None = Form(None),
+    calibration_saved_at: str | None = Form(None),
+    calibration_json: str | None = Form(None),
     app_version: str | None = Header(None),
     current_user: dict = Depends(get_current_user)
 ):
@@ -581,6 +584,7 @@ async def upload_file(
     print(f"User {current_user['username']} uploaded file: {file.filename}, size: {len(content)} bytes")
     output_name = os.path.splitext(file.filename)[0] + ".mp4"
     decrypted_file = os.path.join(UPLOAD_DIR, output_name)
+    calibration_enabled = str(calibration_is_calibrated).strip().lower() == "true" if calibration_is_calibrated is not None else False
 
     job_id = str(uuid4())
     job_app_version = app_version if app_version else "unknown"
@@ -592,6 +596,9 @@ async def upload_file(
             "decrypted_filename": output_name,
             "result_stem": current_user.get("UID", current_user["username"]),
             "app_version": job_app_version,
+            "calibration_is_calibrated": calibration_enabled,
+            "calibration_saved_at": calibration_saved_at if calibration_saved_at is not None else "",
+            "calibration_json": calibration_json if calibration_json is not None else "",
             "created_at": now_iso(),
             "started_at": None,
             "finished_at": None,
@@ -606,7 +613,16 @@ async def upload_file(
         "username": current_user["username"],
         "user_uid": current_user.get("UID"),
         "app_version": job_app_version,
+        "calibration_is_calibrated": calibration_enabled,
+        "calibration_saved_at": calibration_saved_at if calibration_saved_at is not None else "",
+        "calibration_json": calibration_json if calibration_json is not None else "",
     })
+    print(
+        "[upload] calibration payload: "
+        f"is_calibrated={calibration_enabled}, "
+        f"saved_at={calibration_saved_at if calibration_saved_at is not None else ''}, "
+        f"json_len={len(calibration_json) if calibration_json else 0}"
+    )
     print(f"[video-worker] Job queued: {job_id} (queue size: {video_job_queue.qsize()})")
     return JSONResponse(
         {
