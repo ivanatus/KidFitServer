@@ -685,12 +685,27 @@ async def upload_calibration_bundle(
     if not saved_files:
         raise HTTPException(status_code=400, detail="All uploaded calibration files were empty")
 
+    calibration = None
+    calibration_error = None
     try:
         calibration = calibrate_camera_from_a4_images(saved_files)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        calibration_error = HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Calibration failed: {exc}")
+        calibration_error = HTTPException(status_code=500, detail=f"Calibration failed: {exc}")
+    finally:
+        # Uploaded calibration bundles are temporary; remove all files/folders after processing.
+        try:
+            if os.path.exists(save_dir):
+                shutil.rmtree(save_dir, ignore_errors=True)
+            uid_dir = os.path.join(CALIBRATION_DIR, uid)
+            if os.path.isdir(uid_dir) and not os.listdir(uid_dir):
+                os.rmdir(uid_dir)
+        except Exception as cleanup_exc:
+            print(f"[calibration] Cleanup warning for UID {uid}: {cleanup_exc}")
+
+    if calibration_error is not None:
+        raise calibration_error
 
     print(f"[calibration] UID {uid} uploaded {len(saved_files)} files to {save_dir}")
     return JSONResponse(
