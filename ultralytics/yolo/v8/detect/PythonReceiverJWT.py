@@ -14,6 +14,7 @@ import time
 import traceback
 import cv2
 import re
+import numpy as np
 from uuid import uuid4
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, "LEA_Python"))
@@ -278,6 +279,127 @@ def reencode_video_with_opencv(video_path: str) -> bool:
         if os.path.exists(temp_path):
             os.remove(temp_path)
     return False
+
+
+def _order_quad_points(pts: np.ndarray) -> np.ndarray:
+    """Return 4 points ordered as: top-left, top-right, bottom-right, bottom-left."""
+    pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
+    s = pts.sum(axis=1)
+    d = np.diff(pts, axis=1).reshape(-1)
+    ordered = np.zeros((4, 2), dtype=np.float32)
+    ordered[0] = pts[np.argmin(s)]   # top-left
+    ordered[2] = pts[np.argmax(s)]   # bottom-right
+    ordered[1] = pts[np.argmin(d)]   # top-right
+    ordered[3] = pts[np.argmax(d)]   # bottom-left
+    return ordered
+
+
+def _detect_a4_corners(image: np.ndarray) -> np.ndarray | None:
+    """Detect the largest 4-corner contour, assumed to be A4 paper."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(gray, 60, 180)
+    edges = cv2.dilate(edges, None, iterations=1)
+    edges = cv2.erode(edges, None, iterations=1)
+
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    h, w = image.shape[:2]
+    min_area = 0.02 * float(h * w)
+    best = None
+    best_area = 0.0
+
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < min_area:
+            continue
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        if len(approx) != 4:
+            continue
+        if not cv2.isContourConvex(approx):
+            continue
+        if area > best_area:
+            best_area = area
+            best = approx
+
+    if best is None:
+        return None
+
+    return _order_quad_points(best.reshape(4, 2))
+
+
+def calibrate_camera_from_a4_images(
+    image_paths: list[str],
+    a4_width_m: float = 0.297,
+    a4_height_m: float = 0.210,
+) -> dict:
+    """
+    Calibrate camera from multiple views of a single A4 sheet.
+    Returns RMS reprojection error, camera matrix and distortion coefficients.
+    """
+    if not image_paths:
+        raise ValueError("No image paths provided for calibration.")
+
+    # 3D corners of A4 on Z=0 plane (meters): TL, TR, BR, BL
+    objp = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [a4_width_m, 0.0, 0.0],
+            [a4_width_m, a4_height_m, 0.0],
+            [0.0, a4_height_m, 0.0],
+        ],
+        dtype=np.float32,
+    )
+
+    object_points = []
+    image_points = []
+    used_images = []
+    rejected_images = []
+    image_size = None
+
+    for path in image_paths:
+        img = cv2.imread(path)
+        if img is None:
+            rejected_images.append({"path": path, "reason": "unable_to_read"})
+            continue
+        if image_size is None:
+            image_size = (img.shape[1], img.shape[0])  # (width, height)
+
+        corners = _detect_a4_corners(img)
+        if corners is None:
+            rejected_images.append({"path": path, "reason": "a4_not_detected"})
+            continue
+
+        object_points.append(objp)
+        image_points.append(corners.reshape(-1, 1, 2).astype(np.float32))
+        used_images.append(path)
+
+    if len(used_images) < 3:
+        raise ValueError(
+            f"Not enough valid images for calibration. Need >= 3, got {len(used_images)}."
+        )
+
+    rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+        object_points,
+        image_points,
+        image_size,
+        None,
+        None,
+    )
+
+    return {
+        "rms_reprojection_error": float(rms),
+        "camera_matrix": camera_matrix.tolist(),
+        "distortion_coefficients": dist_coeffs.reshape(-1).tolist(),
+        "used_images_count": len(used_images),
+        "used_images": used_images,
+        "rejected_images_count": len(rejected_images),
+        "rejected_images": rejected_images,
+        "a4_size_m": {"width": a4_width_m, "height": a4_height_m},
+    }
 
 
 def video_worker():
@@ -563,15 +685,22 @@ async def upload_calibration_bundle(
     if not saved_files:
         raise HTTPException(status_code=400, detail="All uploaded calibration files were empty")
 
+    try:
+        calibration = calibrate_camera_from_a4_images(saved_files)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Calibration failed: {exc}")
+
     print(f"[calibration] UID {uid} uploaded {len(saved_files)} files to {save_dir}")
     return JSONResponse(
         {
-            "message": "Calibration bundle uploaded.",
+            "message": "Calibration completed.",
             "uid": uid,
             "batch_id": batch_id,
             "saved_count": len(saved_files),
             "save_dir": save_dir,
-            "files": saved_files,
+            "calibration": calibration,
         },
         status_code=201,
     )
