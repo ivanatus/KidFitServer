@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, status, Header, Request, Body, Form
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.exceptions import RequestValidationError
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 import os
@@ -75,6 +76,27 @@ MAX_A4_ASPECT = 1.55
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # Print concise diagnostics to quickly identify which field/key is wrong in multipart requests.
+    print("[validation] 422 RequestValidationError")
+    print(f"[validation] path={request.url.path} method={request.method}")
+    print(f"[validation] content-type={request.headers.get('content-type', '')}")
+    print(f"[validation] errors={exc.errors()}")
+    try:
+        if "multipart/form-data" in (request.headers.get("content-type", "")):
+            form = await request.form()
+            form_keys = list(form.keys())
+            print(f"[validation] multipart keys={form_keys}")
+    except Exception as form_exc:
+        print(f"[validation] could not inspect form keys: {form_exc}")
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
     
 # Decrypt and get user database from csv
 def get_user_database():
