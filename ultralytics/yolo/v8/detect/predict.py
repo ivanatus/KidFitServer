@@ -77,7 +77,40 @@ calibration_context = {
     "saved_at": "",
     "raw_json": "",
     "parsed": None,
+    "usable": False,
+    "invalid_reason": "",
 }
+MAX_CALIBRATION_RMS = 3.0
+
+
+def _validate_calibration_payload(payload):
+    """Validate calibration schema and numeric quality gates."""
+    required_keys = ("camera_matrix", "distortion_coefficients", "rms_reprojection_error")
+    for key in required_keys:
+        if key not in payload:
+            return False, f"missing_key:{key}"
+
+    try:
+        camera_matrix = np.asarray(payload["camera_matrix"], dtype=np.float64)
+        dist_coeffs = np.asarray(payload["distortion_coefficients"], dtype=np.float64).reshape(-1)
+        rms = float(payload["rms_reprojection_error"])
+    except Exception as exc:
+        return False, f"type_cast_error:{exc}"
+
+    if camera_matrix.shape != (3, 3):
+        return False, f"bad_camera_matrix_shape:{camera_matrix.shape}"
+    if dist_coeffs.size < 4:
+        return False, f"bad_distortion_coeff_count:{dist_coeffs.size}"
+    if not np.isfinite(camera_matrix).all():
+        return False, "camera_matrix_not_finite"
+    if not np.isfinite(dist_coeffs).all():
+        return False, "distortion_not_finite"
+    if not np.isfinite(rms) or rms <= 0:
+        return False, f"bad_rms:{rms}"
+    if rms > MAX_CALIBRATION_RMS:
+        return False, f"rms_too_high:{rms:.4f}>{MAX_CALIBRATION_RMS:.4f}"
+
+    return True, ""
 
 
 def load_calibration_context_from_env():
@@ -87,23 +120,34 @@ def load_calibration_context_from_env():
     raw_json = os.getenv("CALIBRATION_JSON", "")
     is_calibrated = str(raw_flag).strip().lower() == "true"
     parsed = None
+    usable = False
+    invalid_reason = ""
 
     if raw_json:
         try:
             parsed = json.loads(raw_json)
+            if isinstance(parsed, dict):
+                usable, invalid_reason = _validate_calibration_payload(parsed)
+            else:
+                invalid_reason = f"bad_json_root_type:{type(parsed).__name__}"
         except Exception as exc:
-            print(f"[predict] Calibration JSON parse failed: {exc}")
+            invalid_reason = f"json_parse_failed:{exc}"
 
     calibration_context["is_calibrated"] = is_calibrated
     calibration_context["saved_at"] = raw_saved_at
     calibration_context["raw_json"] = raw_json
     calibration_context["parsed"] = parsed
+    calibration_context["usable"] = bool(is_calibrated and usable)
+    calibration_context["invalid_reason"] = invalid_reason
 
     print(
         f"[predict] Calibration payload received: "
         f"is_calibrated={is_calibrated}, saved_at={raw_saved_at}, "
-        f"json_len={len(raw_json)}, parsed_ok={parsed is not None}"
+        f"json_len={len(raw_json)}, parsed_ok={parsed is not None}, "
+        f"usable={calibration_context['usable']}"
     )
+    if is_calibrated and not calibration_context["usable"]:
+        print(f"[predict] Calibration fallback reason: {invalid_reason if invalid_reason else 'not_provided'}")
 
 
 def flush_movement_rows(csv_path):
