@@ -79,6 +79,9 @@ calibration_context = {
     "parsed": None,
     "usable": False,
     "invalid_reason": "",
+    "camera_matrix": None,
+    "dist_coeffs": None,
+    "ground_homography": None,
 }
 MAX_CALIBRATION_RMS = 3.0
 
@@ -113,6 +116,57 @@ def _validate_calibration_payload(payload):
     return True, ""
 
 
+def _extract_ground_homography(payload):
+    """Accept either 'homography_ground' or 'homography' as a 3x3 matrix."""
+    raw_h = payload.get("homography_ground", payload.get("homography"))
+    if raw_h is None:
+        return None
+    h = np.asarray(raw_h, dtype=np.float64)
+    if h.shape != (3, 3):
+        return None
+    if not np.isfinite(h).all():
+        return None
+    if abs(np.linalg.det(h)) < 1e-12:
+        return None
+    return h
+
+
+def _prepare_calibration_matrices(payload):
+    """Build reusable OpenCV matrices from parsed calibration JSON."""
+    try:
+        k = np.asarray(payload["camera_matrix"], dtype=np.float64)
+        d = np.asarray(payload["distortion_coefficients"], dtype=np.float64).reshape(-1, 1)
+    except Exception:
+        return None, None, None
+    h = _extract_ground_homography(payload)
+    return k, d, h
+
+
+def project_point_with_calibration(x_px, y_px):
+    """
+    Convert image point to calibrated geometry:
+    1) undistort image point
+    2) map to ground plane if homography is available
+    Returns (x, y, mapped_to_ground: bool) or None on failure.
+    """
+    if not calibration_context["usable"]:
+        return None
+    k = calibration_context.get("camera_matrix")
+    d = calibration_context.get("dist_coeffs")
+    if k is None or d is None:
+        return None
+    try:
+        pt = np.array([[[float(x_px), float(y_px)]]], dtype=np.float64)
+        und = cv2.undistortPoints(pt, k, d, P=k).reshape(2)
+        h = calibration_context.get("ground_homography")
+        if h is not None:
+            g = cv2.perspectiveTransform(np.array([[[und[0], und[1]]]], dtype=np.float64), h).reshape(2)
+            return float(g[0]), float(g[1]), True
+        return float(und[0]), float(und[1]), False
+    except Exception:
+        return None
+
+
 def load_calibration_context_from_env():
     """Read optional calibration payload passed from API worker to predict.py."""
     raw_flag = os.getenv("CALIBRATION_IS_CALIBRATED", "false")
@@ -127,7 +181,10 @@ def load_calibration_context_from_env():
         try:
             parsed = json.loads(raw_json)
             if isinstance(parsed, dict):
-                usable, invalid_reason = _validate_calibration_payload(parsed)
+                payload = parsed.get("calibration") if isinstance(parsed.get("calibration"), dict) else parsed
+                usable, invalid_reason = _validate_calibration_payload(payload)
+                if usable:
+                    parsed = payload
             else:
                 invalid_reason = f"bad_json_root_type:{type(parsed).__name__}"
         except Exception as exc:
@@ -139,6 +196,18 @@ def load_calibration_context_from_env():
     calibration_context["parsed"] = parsed
     calibration_context["usable"] = bool(is_calibrated and usable)
     calibration_context["invalid_reason"] = invalid_reason
+    calibration_context["camera_matrix"] = None
+    calibration_context["dist_coeffs"] = None
+    calibration_context["ground_homography"] = None
+    if calibration_context["usable"] and isinstance(parsed, dict):
+        k, d, h = _prepare_calibration_matrices(parsed)
+        if k is None or d is None:
+            calibration_context["usable"] = False
+            calibration_context["invalid_reason"] = "matrix_prepare_failed"
+        else:
+            calibration_context["camera_matrix"] = k
+            calibration_context["dist_coeffs"] = d
+            calibration_context["ground_homography"] = h
 
     print(
         f"[predict] Calibration payload received: "
@@ -146,6 +215,9 @@ def load_calibration_context_from_env():
         f"json_len={len(raw_json)}, parsed_ok={parsed is not None}, "
         f"usable={calibration_context['usable']}"
     )
+    if calibration_context["usable"]:
+        has_ground_h = calibration_context["ground_homography"] is not None
+        print(f"[predict] Calibration geometry mode: undistort={'on'}, ground_mapping={'on' if has_ground_h else 'off'}")
     if is_calibrated and not calibration_context["usable"]:
         print(f"[predict] Calibration fallback reason: {invalid_reason if invalid_reason else 'not_provided'}")
 
@@ -547,6 +619,14 @@ class DetectionPredictor(BasePredictor):
                 cx = (x1 + x2) / 2
                 cy = (y1 + y2) / 2  # center y (can also use y2 for floor contact)
                 bottom_y = y2
+                foot_x = cx
+                foot_y = bottom_y
+
+                calibrated_point = project_point_with_calibration(foot_x, foot_y)
+                if calibrated_point is not None:
+                    motion_x, motion_y, _ = calibrated_point
+                else:
+                    motion_x, motion_y = cx, cy
 
                 # Relative depth based on pixel row
                 depth = 1.0 / max(1, (y_floor - bottom_y + 1))  # inverse distance approx
@@ -557,12 +637,12 @@ class DetectionPredictor(BasePredictor):
                 vx = vy = speed = 0.0
                 if prev_state is not None:
                     dt = max(1, frame - prev_state['frame'])  # frame gap
-                    vx = (cx - prev_state['x']) / dt
-                    vy = (cy - prev_state['y']) / dt
+                    vx = (motion_x - prev_state['x']) / dt
+                    vy = (motion_y - prev_state['y']) / dt
                     speed = math.sqrt(vx**2 + vy**2)
 
                 # Update object state
-                object_states[obj_id] = {'frame': frame, 'x': cx, 'y': cy, 'depth': depth_norm}
+                object_states[obj_id] = {'frame': frame, 'x': motion_x, 'y': motion_y, 'depth': depth_norm}
 
                 # Add to write list
                 rows_to_write.append({
