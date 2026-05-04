@@ -78,6 +78,7 @@ OUTLIER_SIGMA = 2.0
 OUTLIER_TRIM_MAX_FRAC = 0.25
 MAX_CALIB_USED_IMAGES = 8
 MAX_CALIB_RMS = 8.0
+MAX_PER_IMAGE_RMS = 7.0
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -635,11 +636,40 @@ def calibrate_camera_from_a4_images(
         )
 
     # Print per-image reprojection error for each non-rejected image in final calibration set.
-    final_per_image_err = []
-    for i, (obj, img_pts) in enumerate(zip(object_points, image_points)):
-        proj, _ = cv2.projectPoints(obj, rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
-        err = float(cv2.norm(img_pts, proj, cv2.NORM_L2) / max(1, len(obj)))
-        final_per_image_err.append(err)
+    # Iteratively drop images with high per-image error and recalibrate.
+    while True:
+        final_per_image_err = []
+        for i, (obj, img_pts) in enumerate(zip(object_points, image_points)):
+            proj, _ = cv2.projectPoints(obj, rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+            err = float(cv2.norm(img_pts, proj, cv2.NORM_L2) / max(1, len(obj)))
+            final_per_image_err.append(err)
+
+        if len(used_images) <= 3:
+            break
+        worst_idx = int(np.argmax(np.asarray(final_per_image_err, dtype=np.float64)))
+        worst_err = float(final_per_image_err[worst_idx])
+        if worst_err <= MAX_PER_IMAGE_RMS:
+            break
+
+        dropped_path = used_images[worst_idx]
+        print(
+            f"[calibration] Per-image RMS pruning: dropping {dropped_path} "
+            f"rms={worst_err:.4f} (> {MAX_PER_IMAGE_RMS:.4f})"
+        )
+        object_points.pop(worst_idx)
+        image_points.pop(worst_idx)
+        used_images.pop(worst_idx)
+        if len(used_images) < 3:
+            break
+        rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,
+            None,
+        )
+
+    for i, err in enumerate(final_per_image_err):
         print(f"[calibration] Used image RMS: path={used_images[i]} rms={err:.4f}")
     print(
         f"[calibration] Frames summary: total={len(image_paths)}, "
