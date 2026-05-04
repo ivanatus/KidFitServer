@@ -171,7 +171,7 @@ def extract_movement_value(stdout: str):
         return None
 
 
-def analyze_video(app_version: str):
+def analyze_video(app_version: str, calibration_is_calibrated: bool, calibration_saved_at: str, calibration_json: str):
     """Run predict.py on all of the videos from video folder"""
     predict_script_path = os.path.join(BASE_DIR, "predict.py")
     predict_command = [
@@ -188,10 +188,12 @@ def analyze_video(app_version: str):
         "save_txt=False"
     ]
     print("Start analysis")
-    print(predict_command)
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
-    env["KIDFIT_APP_VERSION"] = app_version
+    env["APP_VERSION"] = app_version
+    env["CALIBRATION_IS_CALIBRATED"] = "true" if calibration_is_calibrated else "false"
+    env["CALIBRATION_SAVED_AT"] = str(calibration_saved_at or "")
+    env["CALIBRATION_JSON"] = calibration_json or ""
     return subprocess.run(predict_command, cwd=BASE_DIR, capture_output=True, text=True, env=env)
 
 
@@ -417,6 +419,9 @@ def video_worker():
         username = job["username"]
         user_uid = job.get("user_uid")
         app_version = job.get("app_version", "unknown")
+        calibration_is_calibrated = bool(job.get("calibration_is_calibrated", False))
+        calibration_saved_at = str(job.get("calibration_saved_at", ""))
+        calibration_json = job.get("calibration_json", "")
         job_start = time.perf_counter()
         set_job_state(job_id, status="running", started_at=now_iso())
         print(f"[video-worker] Job started: {job_id} ({os.path.basename(encrypted_file)})")
@@ -428,7 +433,12 @@ def video_worker():
             remux_video_for_stable_decode(decrypted_file)
 
             cv_start = time.perf_counter()
-            result = analyze_video(app_version)
+            result = analyze_video(
+                app_version,
+                calibration_is_calibrated,
+                calibration_saved_at,
+                calibration_json,
+            )
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
             movement_value = extract_movement_value(result.stdout or "")

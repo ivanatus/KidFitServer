@@ -25,6 +25,7 @@ import numpy as np
 import os
 import csv
 import math
+import json
 
 #provide path to globals.py file
 import sys
@@ -71,6 +72,38 @@ deepsort = None #variable to store the DeepSort tracker instance
 frame_class = -1
 
 global_instance = Globals()
+calibration_context = {
+    "is_calibrated": False,
+    "saved_at": "",
+    "raw_json": "",
+    "parsed": None,
+}
+
+
+def load_calibration_context_from_env():
+    """Read optional calibration payload passed from API worker to predict.py."""
+    raw_flag = os.getenv("CALIBRATION_IS_CALIBRATED", "false")
+    raw_saved_at = os.getenv("CALIBRATION_SAVED_AT", "")
+    raw_json = os.getenv("CALIBRATION_JSON", "")
+    is_calibrated = str(raw_flag).strip().lower() == "true"
+    parsed = None
+
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+        except Exception as exc:
+            print(f"[predict] Calibration JSON parse failed: {exc}")
+
+    calibration_context["is_calibrated"] = is_calibrated
+    calibration_context["saved_at"] = raw_saved_at
+    calibration_context["raw_json"] = raw_json
+    calibration_context["parsed"] = parsed
+
+    print(
+        f"[predict] Calibration payload received: "
+        f"is_calibrated={is_calibrated}, saved_at={raw_saved_at}, "
+        f"json_len={len(raw_json)}, parsed_ok={parsed is not None}"
+    )
 
 
 def flush_movement_rows(csv_path):
@@ -513,6 +546,7 @@ class DetectionPredictor(BasePredictor):
 @hydra.main(version_base=None, config_path=str(DEFAULT_CONFIG.parent), config_name=DEFAULT_CONFIG.name)
 def predict(cfg):
     print("Enters main function")
+    load_calibration_context_from_env()
     """Main method for making predictions using the DetectionPredictor class"""
     #initialize DeepSort tracker and retrieve video from Firebase Storage
     init_tracker()
@@ -611,7 +645,7 @@ def analyze_plot():
     user = parts[0]
     date = parts[1] if len(parts) > 1 else ""
     time = parts[2].split(".")[0] if len(parts) > 2 else ""
-    app_version = os.getenv("KIDFIT_APP_VERSION", "unknown")
+    app_version = os.getenv("APP_VERSION", "unknown")
 
     print(f"User: {user}")
     print(f"Date: {date}")
