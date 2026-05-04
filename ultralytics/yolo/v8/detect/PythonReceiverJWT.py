@@ -64,6 +64,12 @@ CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 512
 CPU_TORCH_THREADS = max(1, (os.cpu_count() or 2) - 1)
 CPU_OPENCV_THREADS = max(1, min(4, os.cpu_count() or 1))
+MIN_CALIB_SHARPNESS_VAR = 120.0
+MAX_CALIB_GLARE_RATIO = 0.12
+MIN_A4_AREA_RATIO = 0.03
+MAX_A4_AREA_RATIO = 0.95
+MIN_A4_ASPECT = 1.25
+MAX_A4_ASPECT = 1.55
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -309,7 +315,7 @@ def _detect_a4_corners(image: np.ndarray) -> np.ndarray | None:
         return None
 
     h, w = image.shape[:2]
-    min_area = 0.02 * float(h * w)
+    min_area = MIN_A4_AREA_RATIO * float(h * w)
     best = None
     best_area = 0.0
 
@@ -330,7 +336,44 @@ def _detect_a4_corners(image: np.ndarray) -> np.ndarray | None:
     if best is None:
         return None
 
-    return _order_quad_points(best.reshape(4, 2))
+    ordered = _order_quad_points(best.reshape(4, 2))
+    # Refine contour corners for better reprojection quality.
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
+    refined = cv2.cornerSubPix(
+        gray,
+        ordered.reshape(-1, 1, 2).astype(np.float32),
+        (7, 7),
+        (-1, -1),
+        criteria,
+    )
+    return refined.reshape(4, 2)
+
+
+def _frame_sharpness(gray: np.ndarray) -> float:
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
+def _glare_ratio(gray: np.ndarray) -> float:
+    # Saturated highlights can break edge/quad detection.
+    return float(np.mean(gray >= 245))
+
+
+def _quad_area_ratio(quad: np.ndarray, img_w: int, img_h: int) -> float:
+    area = cv2.contourArea(quad.reshape(-1, 1, 2).astype(np.float32))
+    return float(area / max(1.0, float(img_w * img_h)))
+
+
+def _quad_aspect_ratio(quad: np.ndarray) -> float:
+    tl, tr, br, bl = quad
+    top = np.linalg.norm(tr - tl)
+    bottom = np.linalg.norm(br - bl)
+    left = np.linalg.norm(bl - tl)
+    right = np.linalg.norm(br - tr)
+    w = max(1e-6, (top + bottom) / 2.0)
+    h = max(1e-6, (left + right) / 2.0)
+    ratio = max(w, h) / min(w, h)
+    return float(ratio)
 
 
 def calibrate_camera_from_a4_images(
@@ -370,9 +413,38 @@ def calibrate_camera_from_a4_images(
         if image_size is None:
             image_size = (img.shape[1], img.shape[0])  # (width, height)
 
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        sharpness = _frame_sharpness(gray)
+        if sharpness < MIN_CALIB_SHARPNESS_VAR:
+            rejected_images.append(
+                {"path": path, "reason": f"blurred_frame:lap_var={sharpness:.2f}"}
+            )
+            continue
+
+        glare = _glare_ratio(gray)
+        if glare > MAX_CALIB_GLARE_RATIO:
+            rejected_images.append(
+                {"path": path, "reason": f"glare_too_high:ratio={glare:.4f}"}
+            )
+            continue
+
         corners = _detect_a4_corners(img)
         if corners is None:
             rejected_images.append({"path": path, "reason": "a4_not_detected"})
+            continue
+
+        area_ratio = _quad_area_ratio(corners, img.shape[1], img.shape[0])
+        if area_ratio < MIN_A4_AREA_RATIO or area_ratio > MAX_A4_AREA_RATIO:
+            rejected_images.append(
+                {"path": path, "reason": f"partial_or_invalid_area:ratio={area_ratio:.4f}"}
+            )
+            continue
+
+        aspect = _quad_aspect_ratio(corners)
+        if aspect < MIN_A4_ASPECT or aspect > MAX_A4_ASPECT:
+            rejected_images.append(
+                {"path": path, "reason": f"bad_a4_aspect:{aspect:.4f}"}
+            )
             continue
 
         object_points.append(objp)
@@ -390,6 +462,10 @@ def calibrate_camera_from_a4_images(
         image_size,
         None,
         None,
+    )
+    print(
+        f"[calibration] Frames summary: total={len(image_paths)}, "
+        f"used={len(used_images)}, rejected={len(rejected_images)}, rms={float(rms):.4f}"
     )
 
     return {
@@ -740,7 +816,10 @@ async def upload_calibration_bundle(
     if calibration_error is not None:
         raise calibration_error
 
-    print(f"[calibration] UID {uid} uploaded {len(saved_files)} files to {save_dir}")
+    used_count = calibration.get("used_images_count", 0) if isinstance(calibration, dict) else 0
+    rejected_count = calibration.get("rejected_images_count", 0) if isinstance(calibration, dict) else 0
+    print(f"[calibration] UID {uid} uploaded {len(saved_files)} files")
+    print(f"[calibration] Paper detected/used: {used_count}, rejected: {rejected_count}")
     return JSONResponse(
         {
             "message": "Calibration completed.",

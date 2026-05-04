@@ -228,7 +228,7 @@ def flush_movement_rows(csv_path):
         return
     rows_count = len(rows)
     with open(csv_path, 'a', newline='') as csvfile:
-        fieldnames = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
+        fieldnames = ['frame', 'object_id', 'velocity_x', 'velocity_y', 'speed']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writerows(rows)
     movement_csv_buffers[csv_path] = []
@@ -637,8 +637,10 @@ class DetectionPredictor(BasePredictor):
                 vx = vy = speed = 0.0
                 if prev_state is not None:
                     dt = max(1, frame - prev_state['frame'])  # frame gap
-                    vx = (motion_x - prev_state['x']) / dt
-                    vy = (motion_y - prev_state['y']) / dt
+                    # Include depth into movement: far objects get scale compensation.
+                    depth_scale = max(depth_norm, 0.05)
+                    vx = ((motion_x - prev_state['x']) / dt) / depth_scale
+                    vy = ((motion_y - prev_state['y']) / dt) / depth_scale
                     speed = math.sqrt(vx**2 + vy**2)
 
                 # Update object state
@@ -648,12 +650,9 @@ class DetectionPredictor(BasePredictor):
                 rows_to_write.append({
                     'frame': frame,
                     'object_id': obj_id,
-                    'x': round(cx, 2),
-                    'y': round(cy, 2),
-                    'depth': round(depth_norm, 4),
-                    'velocity_x': round(vx, 4),
-                    'velocity_y': round(vy, 4),
-                    'speed': round(speed, 4)
+                    'velocity_x': vx,
+                    'velocity_y': vy,
+                    'speed': speed
                 })
 
             # =========================
@@ -752,7 +751,7 @@ def analyze_plot():
 
     movement = 0.0
     if os.path.exists(movement_csv):
-        movement_columns = ['frame', 'object_id', 'x', 'y', 'depth', 'velocity_x', 'velocity_y', 'speed']
+        movement_columns = ['frame', 'object_id', 'velocity_x', 'velocity_y', 'speed']
         movement_df = pd.read_csv(movement_csv, names=movement_columns, header=None)
         movement_df['speed'] = pd.to_numeric(movement_df['speed'], errors='coerce')
         movement_df = movement_df.dropna(subset=['speed'])
