@@ -65,12 +65,12 @@ CV_MODEL = "yolov8l.pt"
 CV_IMGSZ = 512
 CPU_TORCH_THREADS = max(1, (os.cpu_count() or 2) - 1)
 CPU_OPENCV_THREADS = max(1, min(4, os.cpu_count() or 1))
-MIN_CALIB_SHARPNESS_VAR = 120.0
+MIN_CALIB_SHARPNESS_VAR = 70.0
 MAX_CALIB_GLARE_RATIO = 0.12
-MIN_A4_AREA_RATIO = 0.03
+MIN_A4_AREA_RATIO = 0.015
 MAX_A4_AREA_RATIO = 0.95
-MIN_A4_ASPECT = 1.25
-MAX_A4_ASPECT = 1.55
+MIN_A4_ASPECT = 1.15
+MAX_A4_ASPECT = 1.70
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
