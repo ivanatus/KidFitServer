@@ -474,6 +474,12 @@ def calibrate_camera_from_a4_images(
         used_images.append(path)
 
     if len(used_images) < 3:
+        print(
+            f"[calibration] Failed: not enough valid images. "
+            f"total={len(image_paths)}, used={len(used_images)}, rejected={len(rejected_images)}"
+        )
+        if rejected_images:
+            print(f"[calibration] Rejected details: {rejected_images}")
         raise ValueError(
             f"Not enough valid images for calibration. Need >= 3, got {len(used_images)}."
         )
@@ -821,8 +827,14 @@ async def upload_calibration_bundle(
     try:
         calibration = calibrate_camera_from_a4_images(saved_files)
     except ValueError as exc:
+        print(f"[calibration] ValueError during calibration: {exc}")
+        print(f"[calibration] Input files count={len(saved_files)}")
+        print(f"[calibration] Input files={saved_files}")
         calibration_error = HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
+        print(f"[calibration] Unexpected exception type={type(exc).__name__}: {exc}")
+        print(f"[calibration] Input files count={len(saved_files)}")
+        print(f"[calibration] Input files={saved_files}")
         calibration_error = HTTPException(status_code=500, detail=f"Calibration failed: {exc}")
     finally:
         # Uploaded calibration bundles are temporary; remove all files/folders after processing.
@@ -836,6 +848,10 @@ async def upload_calibration_bundle(
             print(f"[calibration] Cleanup warning for UID {uid}: {cleanup_exc}")
 
     if calibration_error is not None:
+        print(
+            f"[calibration] Returning error status={calibration_error.status_code}, "
+            f"detail={calibration_error.detail}"
+        )
         raise calibration_error
 
     used_count = calibration.get("used_images_count", 0) if isinstance(calibration, dict) else 0
