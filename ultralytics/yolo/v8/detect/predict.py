@@ -62,6 +62,9 @@ recent_bottoms_ref = deque(maxlen=HISTORY_WINDOW)
 object_states = {}  # {id: {'frame': int, 'x': float, 'y': float, 'depth': float}}
 MOVEMENT_CSV_FLUSH_EVERY_FRAMES = 10
 movement_csv_buffers = defaultdict(list)  # csv_path -> list[dict]
+current_video_fps = 30.0
+MAX_SPEED_PER_SEC = 50.0
+MAX_SPEED_DELTA_PER_SEC = 30.0
 
 
 
@@ -626,7 +629,8 @@ class DetectionPredictor(BasePredictor):
                 if calibrated_point is not None:
                     motion_x, motion_y, _ = calibrated_point
                 else:
-                    motion_x, motion_y = cx, cy
+                    # Keep motion point at footpoint for non-calibrated path as well.
+                    motion_x, motion_y = foot_x, foot_y
 
                 # Relative depth based on pixel row
                 depth = 1.0 / max(1, (y_floor - bottom_y + 1))  # inverse distance approx
@@ -636,15 +640,33 @@ class DetectionPredictor(BasePredictor):
                 prev_state = object_states.get(obj_id)
                 vx = vy = speed = 0.0
                 if prev_state is not None:
-                    dt = max(1, frame - prev_state['frame'])  # frame gap
+                    frame_gap = max(1, frame - prev_state['frame'])
+                    fps_now = max(1e-6, float(current_video_fps))
+                    dt = frame_gap / fps_now
                     # Include depth into movement: far objects get scale compensation.
                     depth_scale = max(depth_norm, 0.05)
                     vx = ((motion_x - prev_state['x']) / dt) / depth_scale
                     vy = ((motion_y - prev_state['y']) / dt) / depth_scale
                     speed = math.sqrt(vx**2 + vy**2)
+                    # Runtime sanity clamps against implausible one-frame spikes.
+                    prev_speed = float(prev_state.get('speed', 0.0))
+                    speed = min(speed, MAX_SPEED_PER_SEC)
+                    max_next = prev_speed + MAX_SPEED_DELTA_PER_SEC
+                    if speed > max_next:
+                        speed = max_next
+                    if speed > 1e-9:
+                        scale = speed / max(1e-9, math.sqrt(vx**2 + vy**2))
+                        vx *= scale
+                        vy *= scale
 
                 # Update object state
-                object_states[obj_id] = {'frame': frame, 'x': motion_x, 'y': motion_y, 'depth': depth_norm}
+                object_states[obj_id] = {
+                    'frame': frame,
+                    'x': motion_x,
+                    'y': motion_y,
+                    'depth': depth_norm,
+                    'speed': speed,
+                }
 
                 # Add to write list
                 rows_to_write.append({
@@ -678,6 +700,7 @@ def predict(cfg):
     cfg.imgsz = check_imgsz(cfg.imgsz, min_dim=2)  # check image size
     #source_directory = hydra.utils.to_absolute_path(cfg.source)
     source_directory = os.path.join(BASE_DIR, cfg.source)
+    global current_video_fps
     for filename in os.scandir(source_directory):
         print("Filename ", filename)
         if filename.is_file() and filename.name.endswith('.mp4'):
@@ -688,8 +711,10 @@ def predict(cfg):
             if fps > 0:
                 duration_sec = total_frames / fps 
                 print(f"[predict] Video metadata: file={filename.name}, frames={total_frames}, fps={fps:.3f}, duration={duration_sec:.2f}s")
+                current_video_fps = float(fps)
             else:
                 print(f"[predict] Video metadata: file={filename.name}, frames={total_frames}, fps=unknown, duration=unknown")
+                current_video_fps = 30.0
             cap.release()
             
             global_instance.current_video_file = filename.name
@@ -756,8 +781,18 @@ def analyze_plot():
         movement_df['speed'] = pd.to_numeric(movement_df['speed'], errors='coerce')
         movement_df = movement_df.dropna(subset=['speed'])
         if not movement_df.empty:
-            movement = float(movement_df['speed'].mean())
+            speed_series = movement_df['speed'].astype(float).clip(lower=0.0, upper=MAX_SPEED_PER_SEC)
+            if len(speed_series) >= 10:
+                q_low = speed_series.quantile(0.10)
+                q_high = speed_series.quantile(0.90)
+                trimmed = speed_series[(speed_series >= q_low) & (speed_series <= q_high)]
+                if trimmed.empty:
+                    trimmed = speed_series
+            else:
+                trimmed = speed_series
+            movement = float(trimmed.median())
             print(f"Movement rows used: {len(movement_df)}")
+            print(f"Movement robust rows used: {len(trimmed)} (median after trim)")
         else:
             print("Nije detektirano kretanje u videu (movement CSV has no valid speed rows).")
     else:
