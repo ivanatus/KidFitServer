@@ -473,6 +473,10 @@ def calibrate_camera_from_a4_images(
         image_points.append(corners.reshape(-1, 1, 2).astype(np.float32))
         used_images.append(path)
 
+    if rejected_images:
+        for item in rejected_images:
+            print(f"[calibration] Rejected image: path={item.get('path')} reason={item.get('reason')}")
+
     if len(used_images) < 3:
         print(
             f"[calibration] Failed: not enough valid images. "
@@ -495,6 +499,9 @@ def calibrate_camera_from_a4_images(
         f"[calibration] Frames summary: total={len(image_paths)}, "
         f"used={len(used_images)}, rejected={len(rejected_images)}, rms={float(rms):.4f}"
     )
+    if float(rms) > 3.0:
+        print(f"[calibration] Failed: rms_too_high value={float(rms):.4f} threshold=3.0000")
+        raise ValueError("Calibration RMS too high")
 
     return {
         "rms_reprojection_error": float(rms),
