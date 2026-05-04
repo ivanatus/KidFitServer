@@ -441,6 +441,13 @@ def video_worker():
             )
             cv_duration_sec = round(time.perf_counter() - cv_start, 3)
             print(f"[video-worker] CV processing time: {cv_duration_sec}s (job: {job_id})")
+            if result.stdout:
+                calibration_lines = [
+                    line for line in result.stdout.splitlines()
+                    if "[predict] Calibration" in line
+                ]
+                for line in calibration_lines:
+                    print(line)
             movement_value = extract_movement_value(result.stdout or "")
             if result.returncode != 0:
                 error_msg = (result.stderr or result.stdout or "predict.py failed").strip()
