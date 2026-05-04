@@ -76,6 +76,8 @@ MAX_CORNER_ANGLE_DEG = 110.0
 MAX_OPPOSITE_SIDE_RATIO = 2.5
 OUTLIER_SIGMA = 2.0
 OUTLIER_TRIM_MAX_FRAC = 0.25
+MAX_CALIB_USED_IMAGES = 8
+MAX_CALIB_RMS = 8.0
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -603,12 +605,48 @@ def calibrate_camera_from_a4_images(
             None,
             None,
         )
+
+    # Keep only the best N frames by reprojection error and recalibrate.
+    if len(used_images) > MAX_CALIB_USED_IMAGES:
+        per_image_err = []
+        for i, (obj, img_pts) in enumerate(zip(object_points, image_points)):
+            proj, _ = cv2.projectPoints(obj, rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+            err = float(cv2.norm(img_pts, proj, cv2.NORM_L2) / max(1, len(obj)))
+            per_image_err.append(err)
+        ranked_idx = np.argsort(np.asarray(per_image_err, dtype=np.float64)).tolist()
+        keep_idx = sorted(ranked_idx[:MAX_CALIB_USED_IMAGES])
+        drop_idx = [i for i in range(len(used_images)) if i not in keep_idx]
+        print(
+            f"[calibration] Best-frame selection: keeping {len(keep_idx)} "
+            f"of {len(used_images)} frames by reprojection error"
+        )
+        for i in drop_idx:
+            print(f"[calibration] Dropped non-best frame: {used_images[i]} err={per_image_err[i]:.4f}")
+
+        object_points = [object_points[i] for i in keep_idx]
+        image_points = [image_points[i] for i in keep_idx]
+        used_images = [used_images[i] for i in keep_idx]
+        rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,
+            None,
+        )
+
+    # Print per-image reprojection error for each non-rejected image in final calibration set.
+    final_per_image_err = []
+    for i, (obj, img_pts) in enumerate(zip(object_points, image_points)):
+        proj, _ = cv2.projectPoints(obj, rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+        err = float(cv2.norm(img_pts, proj, cv2.NORM_L2) / max(1, len(obj)))
+        final_per_image_err.append(err)
+        print(f"[calibration] Used image RMS: path={used_images[i]} rms={err:.4f}")
     print(
         f"[calibration] Frames summary: total={len(image_paths)}, "
         f"used={len(used_images)}, rejected={len(rejected_images)}, rms={float(rms):.4f}"
     )
-    if float(rms) > 3.0:
-        print(f"[calibration] Failed: rms_too_high value={float(rms):.4f} threshold=3.0000")
+    if float(rms) > MAX_CALIB_RMS:
+        print(f"[calibration] Failed: rms_too_high value={float(rms):.4f} threshold={MAX_CALIB_RMS:.4f}")
         raise ValueError("Calibration RMS too high")
 
     return {

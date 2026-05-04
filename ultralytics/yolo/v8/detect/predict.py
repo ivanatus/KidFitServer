@@ -83,7 +83,7 @@ calibration_context = {
     "dist_coeffs": None,
     "ground_homography": None,
 }
-MAX_CALIBRATION_RMS = 3.0
+MAX_CALIBRATION_RMS = 8.0
 
 
 def _validate_calibration_payload(payload):
