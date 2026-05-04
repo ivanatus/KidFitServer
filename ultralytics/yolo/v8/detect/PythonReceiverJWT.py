@@ -71,6 +71,11 @@ MIN_A4_AREA_RATIO = 0.015
 MAX_A4_AREA_RATIO = 0.95
 MIN_A4_ASPECT = 1.15
 MAX_A4_ASPECT = 1.70
+MIN_CORNER_ANGLE_DEG = 70.0
+MAX_CORNER_ANGLE_DEG = 110.0
+MAX_OPPOSITE_SIDE_RATIO = 2.5
+OUTLIER_SIGMA = 2.0
+OUTLIER_TRIM_MAX_FRAC = 0.25
 
 # Limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -398,6 +403,62 @@ def _quad_aspect_ratio(quad: np.ndarray) -> float:
     return float(ratio)
 
 
+def _corner_angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Angle ABC in degrees."""
+    ba = a - b
+    bc = c - b
+    den = float(np.linalg.norm(ba) * np.linalg.norm(bc))
+    if den <= 1e-9:
+        return 0.0
+    cosang = float(np.clip(np.dot(ba, bc) / den, -1.0, 1.0))
+    return float(np.degrees(np.arccos(cosang)))
+
+
+def _quad_geometry_is_valid(quad: np.ndarray) -> tuple[bool, str]:
+    """Reject quads that are too distorted to reliably represent A4."""
+    tl, tr, br, bl = quad
+    top = float(np.linalg.norm(tr - tl))
+    right = float(np.linalg.norm(br - tr))
+    bottom = float(np.linalg.norm(br - bl))
+    left = float(np.linalg.norm(bl - tl))
+    if min(top, right, bottom, left) <= 1e-6:
+        return False, "degenerate_side_length"
+
+    tb_ratio = max(top, bottom) / max(1e-6, min(top, bottom))
+    lr_ratio = max(left, right) / max(1e-6, min(left, right))
+    if tb_ratio > MAX_OPPOSITE_SIDE_RATIO or lr_ratio > MAX_OPPOSITE_SIDE_RATIO:
+        return False, f"side_ratio_too_high:tb={tb_ratio:.3f},lr={lr_ratio:.3f}"
+
+    angles = [
+        _corner_angle_deg(bl, tl, tr),
+        _corner_angle_deg(tl, tr, br),
+        _corner_angle_deg(tr, br, bl),
+        _corner_angle_deg(br, bl, tl),
+    ]
+    for idx, ang in enumerate(angles, start=1):
+        if ang < MIN_CORNER_ANGLE_DEG or ang > MAX_CORNER_ANGLE_DEG:
+            return False, f"corner_angle_out_of_range:c{idx}={ang:.2f}"
+    return True, ""
+
+
+def _normalize_a4_orientation(quad: np.ndarray) -> np.ndarray:
+    """
+    Enforce a stable corner correspondence for portrait A4.
+    Input/Output order: TL, TR, BR, BL.
+    """
+    tl, tr, br, bl = quad
+    top = float(np.linalg.norm(tr - tl))
+    bottom = float(np.linalg.norm(br - bl))
+    left = float(np.linalg.norm(bl - tl))
+    right = float(np.linalg.norm(br - tr))
+    mean_w = (top + bottom) / 2.0
+    mean_h = (left + right) / 2.0
+    if mean_w > mean_h:
+        # Rotate corners by 90 deg to keep long side vertical.
+        quad = np.array([tr, br, bl, tl], dtype=np.float32)
+    return quad
+
+
 def calibrate_camera_from_a4_images(
     image_paths: list[str],
     a4_width_m: float = 0.297,
@@ -454,6 +515,7 @@ def calibrate_camera_from_a4_images(
         if corners is None:
             rejected_images.append({"path": path, "reason": "a4_not_detected"})
             continue
+        corners = _normalize_a4_orientation(corners.astype(np.float32))
 
         area_ratio = _quad_area_ratio(corners, img.shape[1], img.shape[0])
         if area_ratio < MIN_A4_AREA_RATIO or area_ratio > MAX_A4_AREA_RATIO:
@@ -466,6 +528,12 @@ def calibrate_camera_from_a4_images(
         if aspect < MIN_A4_ASPECT or aspect > MAX_A4_ASPECT:
             rejected_images.append(
                 {"path": path, "reason": f"bad_a4_aspect:{aspect:.4f}"}
+            )
+            continue
+        geom_ok, geom_reason = _quad_geometry_is_valid(corners)
+        if not geom_ok:
+            rejected_images.append(
+                {"path": path, "reason": f"bad_quad_geometry:{geom_reason}"}
             )
             continue
 
@@ -495,6 +563,46 @@ def calibrate_camera_from_a4_images(
         None,
         None,
     )
+    # Per-image reprojection error outlier removal, then recalibrate.
+    per_image_err = []
+    for i, (obj, img_pts) in enumerate(zip(object_points, image_points)):
+        proj, _ = cv2.projectPoints(obj, rvecs[i], tvecs[i], camera_matrix, dist_coeffs)
+        err = float(cv2.norm(img_pts, proj, cv2.NORM_L2) / max(1, len(obj)))
+        per_image_err.append(err)
+    err_arr = np.asarray(per_image_err, dtype=np.float64)
+    err_mean = float(np.mean(err_arr))
+    err_std = float(np.std(err_arr))
+    err_thr = err_mean + OUTLIER_SIGMA * err_std
+    keep_mask = err_arr <= err_thr
+
+    # Cap drop fraction to avoid over-pruning when all errors are high.
+    max_drop = max(1, int(len(used_images) * OUTLIER_TRIM_MAX_FRAC))
+    drop_indices = np.where(~keep_mask)[0].tolist()
+    if len(drop_indices) > max_drop:
+        ranked = np.argsort(err_arr)[::-1].tolist()
+        drop_indices = ranked[:max_drop]
+        keep_mask = np.ones(len(used_images), dtype=bool)
+        keep_mask[drop_indices] = False
+
+    if np.sum(keep_mask) >= 3 and np.sum(~keep_mask) > 0:
+        print(
+            f"[calibration] Outlier rejection: dropping {int(np.sum(~keep_mask))} images "
+            f"(mean_err={err_mean:.4f}, std={err_std:.4f}, thr={err_thr:.4f})"
+        )
+        for i in np.where(~keep_mask)[0].tolist():
+            print(f"[calibration] Dropped outlier image: {used_images[i]} err={err_arr[i]:.4f}")
+
+        object_points = [object_points[i] for i in range(len(object_points)) if keep_mask[i]]
+        image_points = [image_points[i] for i in range(len(image_points)) if keep_mask[i]]
+        used_images = [used_images[i] for i in range(len(used_images)) if keep_mask[i]]
+
+        rms, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,
+            None,
+        )
     print(
         f"[calibration] Frames summary: total={len(image_paths)}, "
         f"used={len(used_images)}, rejected={len(rejected_images)}, rms={float(rms):.4f}"
